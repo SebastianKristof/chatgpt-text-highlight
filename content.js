@@ -377,6 +377,112 @@ function navigateToSource(snippet) {
 }
 
 // ============================================================================
+// Markdown Conversion
+// ============================================================================
+
+/**
+ * Converts a DOM selection to markdown, preserving formatting.
+ * Handles code blocks, lists, headings, bold, italic, etc.
+ */
+function selectionToMarkdown(selection) {
+  if (!selection || selection.rangeCount === 0) return '';
+  
+  const range = selection.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const element = container.nodeType === Node.ELEMENT_NODE 
+    ? container 
+    : container.parentElement;
+  
+  if (!element) {
+    return selection.toString();
+  }
+  
+  // Clone the range to avoid modifying the selection
+  const clonedRange = range.cloneRange();
+  const tempDiv = document.createElement('div');
+  tempDiv.appendChild(clonedRange.cloneContents());
+  
+  // Convert to markdown
+  return elementToMarkdown(tempDiv);
+}
+
+function elementToMarkdown(element) {
+  if (!element) return '';
+  
+  let markdown = '';
+  const nodes = Array.from(element.childNodes);
+  
+  for (const node of nodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      markdown += node.textContent;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const tagName = node.tagName.toLowerCase();
+      const text = elementToMarkdown(node);
+      
+      switch (tagName) {
+        case 'p':
+          markdown += text + '\n\n';
+          break;
+        case 'br':
+          markdown += '\n';
+          break;
+        case 'strong':
+        case 'b':
+          markdown += `**${text}**`;
+          break;
+        case 'em':
+        case 'i':
+          markdown += `*${text}*`;
+          break;
+        case 'code':
+          // Inline code
+          if (node.parentElement?.tagName?.toLowerCase() !== 'pre') {
+            markdown += `\`${text}\``;
+          } else {
+            markdown += text;
+          }
+          break;
+        case 'pre':
+          const codeElement = node.querySelector('code');
+          const codeText = codeElement ? codeElement.textContent : node.textContent;
+          markdown += '\n```\n' + codeText + '\n```\n';
+          break;
+        case 'h1':
+          markdown += `# ${text}\n\n`;
+          break;
+        case 'h2':
+          markdown += `## ${text}\n\n`;
+          break;
+        case 'h3':
+          markdown += `### ${text}\n\n`;
+          break;
+        case 'ul':
+        case 'ol':
+          const items = Array.from(node.querySelectorAll('li'));
+          items.forEach((item, index) => {
+            const itemText = elementToMarkdown(item).trim();
+            const prefix = tagName === 'ol' ? `${index + 1}. ` : '- ';
+            markdown += prefix + itemText + '\n';
+          });
+          markdown += '\n';
+          break;
+        case 'li':
+          markdown += text;
+          break;
+        case 'blockquote':
+          const lines = text.split('\n').filter(l => l.trim());
+          markdown += lines.map(l => `> ${l}`).join('\n') + '\n\n';
+          break;
+        default:
+          markdown += text;
+      }
+    }
+  }
+  
+  return markdown;
+}
+
+// ============================================================================
 // UI
 // ============================================================================
 
@@ -526,6 +632,308 @@ function createToast(message, duration = 3000) {
   return toast;
 }
 
+let selectionToolbar = null;
+let chatgptPopupObserver = null;
+
+function findChatGPTPopup() {
+  // Multiple strategies to find ChatGPT's popup
+  // Strategy 1: Look for aria-live="polite" with fixed positioning
+  const popups = document.querySelectorAll('[aria-live="polite"]');
+  for (const popup of popups) {
+    const style = window.getComputedStyle(popup);
+    if (style.position === 'fixed' || style.position === 'absolute') {
+      // Check if it contains buttons
+      const buttons = popup.querySelectorAll('button');
+      if (buttons.length > 0) {
+        console.log('[CE] Found ChatGPT popup via aria-live:', popup);
+        return popup;
+      }
+    }
+  }
+  
+  // Strategy 2: Look for elements with "Ask ChatGPT" text
+  const allElements = document.querySelectorAll('*');
+  for (const el of allElements) {
+    if (el.textContent && el.textContent.includes('Ask ChatGPT')) {
+      // Find the parent container that's fixed/absolute
+      let parent = el;
+      while (parent && parent !== document.body) {
+        const style = window.getComputedStyle(parent);
+        if ((style.position === 'fixed' || style.position === 'absolute') && 
+            (style.top !== 'auto' || style.left !== 'auto')) {
+          console.log('[CE] Found ChatGPT popup via text search:', parent);
+          return parent;
+        }
+        parent = parent.parentElement;
+      }
+    }
+  }
+  
+  // Strategy 3: Look for fixed elements with shadow-long class (ChatGPT's button style)
+  const shadowElements = document.querySelectorAll('.shadow-long');
+  for (const el of shadowElements) {
+    let parent = el;
+    while (parent && parent !== document.body) {
+      const style = window.getComputedStyle(parent);
+      if (style.position === 'fixed' && parent.querySelector('button')) {
+        console.log('[CE] Found ChatGPT popup via shadow-long:', parent);
+        return parent;
+      }
+      parent = parent.parentElement;
+    }
+  }
+  
+  console.log('[CE] ChatGPT popup not found');
+  return null;
+}
+
+function createSelectionToolbar(selection, range) {
+  // Remove existing toolbar
+  if (selectionToolbar) {
+    selectionToolbar.remove();
+    selectionToolbar = null;
+  }
+  
+  // Try to inject into ChatGPT's popup
+  function injectIntoChatGPTPopup() {
+    const chatgptPopup = findChatGPTPopup();
+    if (chatgptPopup) {
+      console.log('[CE] Found popup, attempting injection');
+      
+      // Check if we already added our buttons
+      const existing = chatgptPopup.querySelector('.ce-selection-buttons');
+      if (existing) {
+        console.log('[CE] Buttons already exist');
+        return true;
+      }
+      
+      // Try multiple strategies to find the button container
+      let buttonContainer = null;
+      
+      // Strategy 1: Look for the specific class combination
+      buttonContainer = chatgptPopup.querySelector('.shadow-long.flex.overflow-hidden.rounded-xl');
+      
+      // Strategy 2: Look for any div containing buttons
+      if (!buttonContainer) {
+        const buttons = chatgptPopup.querySelectorAll('button');
+        if (buttons.length > 0) {
+          // Find the parent container
+          let parent = buttons[0].parentElement;
+          while (parent && parent !== chatgptPopup) {
+            if (parent.classList.contains('flex') || parent.classList.contains('shadow-long')) {
+              buttonContainer = parent;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+          // If no specific container, use the popup itself
+          if (!buttonContainer) {
+            buttonContainer = chatgptPopup;
+          }
+        }
+      }
+      
+      // Strategy 3: Just use the popup directly
+      if (!buttonContainer) {
+        buttonContainer = chatgptPopup;
+      }
+      
+      if (buttonContainer) {
+        console.log('[CE] Found button container:', buttonContainer);
+        
+        // Create our buttons container
+        const ourButtons = document.createElement('div');
+        ourButtons.className = 'ce-selection-buttons';
+        ourButtons.style.display = 'flex';
+        ourButtons.style.gap = '8px';
+        ourButtons.style.marginLeft = '8px';
+        ourButtons.style.alignItems = 'center';
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn relative btn-secondary shadow-long flex rounded-xl border-none active:opacity-1';
+        saveBtn.style.cursor = 'pointer';
+        saveBtn.innerHTML = `
+          <div class="flex items-center justify-center">
+            <span class="flex items-center gap-1.5 select-none">
+              <span style="font-size: 16px;">💾</span>
+              <span class="whitespace-nowrap! select-none max-md:sr-only">Save snippet</span>
+            </span>
+          </div>
+        `;
+        saveBtn.setAttribute('aria-label', 'Save snippet');
+        
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn relative btn-secondary shadow-long flex rounded-xl border-none active:opacity-1';
+        copyBtn.style.cursor = 'pointer';
+        copyBtn.innerHTML = `
+          <div class="flex items-center justify-center">
+            <span class="flex items-center gap-1.5 select-none">
+              <span style="font-size: 16px;">📋</span>
+              <span class="whitespace-nowrap! select-none max-md:sr-only">Copy markdown</span>
+            </span>
+          </div>
+        `;
+        copyBtn.setAttribute('aria-label', 'Copy as markdown');
+        
+        // Event handlers
+        saveBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          console.log('[CE] Save button clicked');
+          const snippet = buildSnippetFromSelection();
+          if (snippet) {
+            addSnippet(snippet);
+            if (snippet.truncated) {
+              createToast('Snippet truncated (max 10,000 characters)');
+            } else {
+              createToast('Snippet saved');
+            }
+          }
+          window.getSelection().removeAllRanges();
+        });
+        
+        copyBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          console.log('[CE] Copy button clicked');
+          try {
+            const markdown = selectionToMarkdown(selection);
+            await navigator.clipboard.writeText(markdown);
+            createToast('Copied as markdown');
+          } catch (error) {
+            console.error('[CE] Failed to copy:', error);
+            createToast('Failed to copy to clipboard');
+          }
+          window.getSelection().removeAllRanges();
+        });
+        
+        ourButtons.appendChild(saveBtn);
+        ourButtons.appendChild(copyBtn);
+        buttonContainer.appendChild(ourButtons);
+        selectionToolbar = ourButtons;
+        console.log('[CE] Buttons injected successfully');
+        return true;
+      } else {
+        console.log('[CE] Could not find button container');
+      }
+    }
+    return false;
+  }
+  
+  console.log('[CE] Creating selection toolbar');
+  
+  // Try multiple times to catch ChatGPT's popup
+  let attempts = 0;
+  const maxAttempts = 20; // Increased attempts
+  
+  const tryInject = setInterval(() => {
+    attempts++;
+    console.log(`[CE] Injection attempt ${attempts}/${maxAttempts}`);
+    if (injectIntoChatGPTPopup()) {
+      clearInterval(tryInject);
+      return;
+    }
+    if (attempts >= maxAttempts) {
+      clearInterval(tryInject);
+      console.log('[CE] Max attempts reached, using fallback toolbar');
+      // Fallback: create our own toolbar
+      createFallbackToolbar(selection, range);
+    }
+  }, 150); // Slightly longer interval
+  
+  // Also try immediately
+  if (!injectIntoChatGPTPopup()) {
+    console.log('[CE] Immediate injection failed, will retry');
+  }
+}
+
+function createFallbackToolbar(selection, range) {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'ce-selection-toolbar';
+  toolbar.setAttribute('role', 'toolbar');
+  toolbar.setAttribute('aria-label', 'Selection actions');
+  
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'ce-btn ce-btn-secondary ce-toolbar-btn';
+  saveBtn.innerHTML = '<span>💾</span> Save snippet';
+  saveBtn.setAttribute('aria-label', 'Save snippet');
+  
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'ce-btn ce-btn-secondary ce-toolbar-btn';
+  copyBtn.innerHTML = '<span>📋</span> Copy as markdown';
+  copyBtn.setAttribute('aria-label', 'Copy as markdown');
+  
+  const rect = range.getBoundingClientRect();
+  const scrollY = window.scrollY || window.pageYOffset;
+  const scrollX = window.scrollX || window.pageXOffset;
+  
+  toolbar.style.top = `${rect.top + scrollY - 8}px`;
+  toolbar.style.left = `${rect.left + scrollX + (rect.width / 2)}px`;
+  toolbar.style.transform = 'translate(-50%, -100%)';
+  
+  toolbar.appendChild(saveBtn);
+  toolbar.appendChild(copyBtn);
+  
+  saveBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const snippet = buildSnippetFromSelection();
+    if (snippet) {
+      addSnippet(snippet);
+      if (snippet.truncated) {
+        createToast('Snippet truncated (max 10,000 characters)');
+      } else {
+        createToast('Snippet saved');
+      }
+    }
+    hideSelectionToolbar();
+    window.getSelection().removeAllRanges();
+  });
+  
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const markdown = selectionToMarkdown(selection);
+      await navigator.clipboard.writeText(markdown);
+      createToast('Copied as markdown');
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      createToast('Failed to copy to clipboard');
+    }
+    hideSelectionToolbar();
+    window.getSelection().removeAllRanges();
+  });
+  
+  const container = document.getElementById(CONTAINER_ID) || createContainer();
+  container.appendChild(toolbar);
+  selectionToolbar = toolbar;
+  
+  requestAnimationFrame(() => {
+    toolbar.classList.add('ce-toolbar-show');
+  });
+}
+
+function hideSelectionToolbar() {
+  if (selectionToolbar) {
+    // If it's in ChatGPT's popup, just remove our buttons
+    if (selectionToolbar.classList.contains('ce-selection-buttons')) {
+      if (selectionToolbar.parentNode) {
+        selectionToolbar.parentNode.removeChild(selectionToolbar);
+      }
+    } else {
+      // Fallback toolbar
+      selectionToolbar.classList.remove('ce-toolbar-show');
+      setTimeout(() => {
+        if (selectionToolbar && selectionToolbar.parentNode) {
+          selectionToolbar.parentNode.removeChild(selectionToolbar);
+        }
+      }, 200);
+    }
+    selectionToolbar = null;
+  }
+}
+
 function updateFABCount(fab, count) {
   const countEl = fab.querySelector('.ce-fab-count');
   if (countEl) {
@@ -629,9 +1037,21 @@ function updateUI() {
 
 function setupEventListeners() {
   document.addEventListener('mouseup', handleSelection);
+  document.addEventListener('mousedown', (e) => {
+    // Hide toolbar when clicking outside (but not if it's in ChatGPT's popup)
+    if (selectionToolbar && !selectionToolbar.contains(e.target)) {
+      // Only hide if it's our fallback toolbar, not if it's integrated into ChatGPT's popup
+      if (!selectionToolbar.classList.contains('ce-selection-buttons')) {
+        hideSelectionToolbar();
+      }
+    }
+  });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.panelOpen) {
-      handleClose();
+    if (e.key === 'Escape') {
+      if (state.panelOpen) {
+        handleClose();
+      }
+      hideSelectionToolbar();
     }
   });
   document.addEventListener('click', (e) => {
@@ -639,27 +1059,72 @@ function setupEventListeners() {
       handleClose();
     }
   });
+  // Hide toolbar on scroll (only fallback, ChatGPT's popup handles its own)
+  document.addEventListener('scroll', () => {
+    if (selectionToolbar && !selectionToolbar.classList.contains('ce-selection-buttons')) {
+      hideSelectionToolbar();
+    }
+  }, true);
+  
+  // Watch for ChatGPT popup appearing/disappearing
+  if (typeof MutationObserver !== 'undefined') {
+    chatgptPopupObserver = new MutationObserver((mutations) => {
+      // When ChatGPT's popup is removed, clean up our buttons
+      mutations.forEach((mutation) => {
+        mutation.removedNodes.forEach((node) => {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            if (node.querySelector && node.querySelector('.ce-selection-buttons')) {
+              selectionToolbar = null;
+            }
+          }
+        });
+      });
+    });
+    
+    chatgptPopupObserver.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  }
 }
 
 function handleSelection(e) {
   setTimeout(() => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      hideSelectionToolbar();
       return;
     }
+    
+    console.log('[CE] Selection detected');
+    
+    // Don't show toolbar if clicking in extension UI
     if (container && container.contains(e.target)) {
+      hideSelectionToolbar();
       return;
     }
-    const snippet = buildSnippetFromSelection();
-    if (snippet) {
-      addSnippet(snippet);
-      if (snippet.truncated) {
-        createToast('Snippet truncated (max 10,000 characters)');
-      } else {
-        createToast('Snippet saved');
+    
+    // Don't show toolbar if selection is in extension UI
+    const range = selection.getRangeAt(0);
+    const containerEl = range.commonAncestorContainer;
+    const element = containerEl.nodeType === Node.ELEMENT_NODE 
+      ? containerEl 
+      : containerEl.parentElement;
+    
+    if (element) {
+      let current = element;
+      while (current && current !== document.body) {
+        if (current.id === CONTAINER_ID || current.classList?.contains('ce-extension')) {
+          hideSelectionToolbar();
+          return;
+        }
+        current = current.parentElement;
       }
     }
-  }, 10);
+    
+    // Show selection toolbar
+    createSelectionToolbar(selection, range);
+  }, 50); // Slightly longer delay to let ChatGPT's popup appear first
 }
 
 function addSnippet(snippet) {
@@ -690,9 +1155,13 @@ async function handleCopy() {
     createToast('No snippets to copy');
     return;
   }
+  // Format snippets as markdown list with better formatting
   const markdown = state.items
-    .map(snippet => `- ${snippet.text}`)
-    .join('\n');
+    .map((snippet, index) => {
+      // Try to preserve any markdown formatting in the snippet text
+      return `${index + 1}. ${snippet.text}`;
+    })
+    .join('\n\n');
   try {
     await navigator.clipboard.writeText(markdown);
     createToast(`Copied ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''} to clipboard`);
