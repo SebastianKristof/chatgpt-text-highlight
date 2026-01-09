@@ -273,66 +273,22 @@ function findMessageByPrefix(selectionPrefix) {
 
 function applyTransientHighlight(element, startOffset, endOffset) {
   if (!element) return;
-  const text = (element.innerText || element.textContent || '').trim();
-  const normalizedText = text.replace(/\s+/g, ' ');
-  const walker = document.createTreeWalker(
-    element,
-    NodeFilter.SHOW_TEXT,
-    null,
-    false
-  );
-  let currentOffset = 0;
-  let startNode = null;
-  let endNode = null;
-  let startNodeOffset = 0;
-  let endNodeOffset = 0;
-  let node;
-  while (node = walker.nextNode()) {
-    const nodeText = node.textContent || '';
-    const normalizedNodeText = nodeText.replace(/\s+/g, ' ');
-    const nodeLength = normalizedNodeText.length;
-    if (!startNode && currentOffset + nodeLength >= startOffset) {
-      startNode = node;
-      startNodeOffset = startOffset - currentOffset;
-    }
-    if (currentOffset + nodeLength >= endOffset) {
-      endNode = node;
-      endNodeOffset = endOffset - currentOffset;
-      break;
-    }
-    currentOffset += nodeLength;
-  }
-  if (!startNode || !endNode) {
+  
+  // Descoped: Just scroll to the message without DOM manipulation
+  // Highlighting specific text ranges was breaking the DOM, so we'll
+  // just scroll to the message block for now. Can be enhanced later.
+  try {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    
+    // Optional: Add a subtle flash effect using CSS class (no DOM manipulation)
     element.classList.add('ce-highlight-transient');
     setTimeout(() => {
-      element.classList.remove('ce-highlight-transient');
-    }, HIGHLIGHT_DURATION);
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    return;
-  }
-  try {
-    const range = document.createRange();
-    range.setStart(startNode, Math.min(startNodeOffset, startNode.textContent.length));
-    range.setEnd(endNode, Math.min(endNodeOffset, endNode.textContent.length));
-    const highlight = document.createElement('span');
-    highlight.className = 'ce-highlight-transient';
-    highlight.textContent = range.toString();
-    range.deleteContents();
-    range.insertNode(highlight);
-    highlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => {
-      if (highlight.parentNode) {
-        highlight.parentNode.replaceChild(document.createTextNode(highlight.textContent), highlight);
-        highlight.parentNode.normalize();
+      if (element && element.parentNode && element.classList) {
+        element.classList.remove('ce-highlight-transient');
       }
     }, HIGHLIGHT_DURATION);
   } catch (error) {
-    console.warn('Failed to create precise highlight, using element highlight:', error);
-    element.classList.add('ce-highlight-transient');
-    setTimeout(() => {
-      element.classList.remove('ce-highlight-transient');
-    }, HIGHLIGHT_DURATION);
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    console.warn('Failed to scroll to element:', error);
   }
 }
 
@@ -367,11 +323,17 @@ function navigateToSource(snippet) {
       anchor.selectionOffsets.end
     );
   } else {
-    messageBlock.classList.add('ce-highlight-transient');
-    setTimeout(() => {
-      messageBlock.classList.remove('ce-highlight-transient');
-    }, HIGHLIGHT_DURATION);
-    messageBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    try {
+      messageBlock.classList.add('ce-highlight-transient');
+      messageBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => {
+        if (messageBlock && messageBlock.parentNode && messageBlock.classList) {
+          messageBlock.classList.remove('ce-highlight-transient');
+        }
+      }, HIGHLIGHT_DURATION);
+    } catch (error) {
+      console.warn('Failed to highlight message block:', error);
+    }
   }
   return true;
 }
@@ -534,6 +496,27 @@ function elementToMarkdown(element) {
   return markdown;
 }
 
+/**
+ * Cleans up markdown text by removing extra empty lines and normalizing spacing.
+ * @param {string} text - Markdown text to clean
+ * @returns {string} Cleaned markdown text
+ */
+function cleanupMarkdown(text) {
+  if (!text) return '';
+  
+  // Remove extra empty lines (max 2 consecutive newlines)
+  let cleaned = text.replace(/\n{3,}/g, '\n\n');
+  
+  // Remove leading/trailing empty lines
+  cleaned = cleaned.replace(/^\n+|\n+$/g, '');
+  
+  // Clean up empty lines around list items (keep single line between items)
+  cleaned = cleaned.replace(/(\n{2,})([-*+]|\d+\.)/g, '\n$2');
+  cleaned = cleaned.replace(/([-*+]|\d+\.)(\n{2,})/g, '$1\n');
+  
+  return cleaned;
+}
+
 // ============================================================================
 // UI
 // ============================================================================
@@ -562,7 +545,7 @@ function createFAB(count, onClick) {
   return fab;
 }
 
-function createSnippetItem(snippet, index, onRemove, onSnippetClick) {
+function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy) {
   const item = document.createElement('div');
   item.className = 'ce-snippet-item';
   item.setAttribute('data-snippet-id', snippet.id);
@@ -577,6 +560,20 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick) {
   const timestamp = new Date(snippet.timestamp);
   const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   meta.textContent = timeStr;
+  
+  const actions = document.createElement('div');
+  actions.className = 'ce-snippet-actions';
+  
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'ce-btn ce-btn-icon ce-btn-small ce-btn-copy';
+  copyBtn.setAttribute('aria-label', 'Copy snippet');
+  copyBtn.innerHTML = '📋';
+  copyBtn.title = 'Copy to markdown';
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await onCopy(snippet);
+  });
+  
   const removeBtn = document.createElement('button');
   removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small';
   removeBtn.setAttribute('aria-label', 'Remove snippet');
@@ -585,13 +582,17 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick) {
     e.stopPropagation();
     onRemove(snippet.id);
   });
+  
+  actions.appendChild(copyBtn);
+  actions.appendChild(removeBtn);
+  
   item.appendChild(text);
   item.appendChild(meta);
-  item.appendChild(removeBtn);
+  item.appendChild(actions);
   return item;
 }
 
-function createSnippetList({ snippets, onRemove, onSnippetClick }) {
+function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet }) {
   const list = document.createElement('div');
   list.className = 'ce-snippet-list';
   if (snippets.length === 0) {
@@ -602,7 +603,7 @@ function createSnippetList({ snippets, onRemove, onSnippetClick }) {
     return list;
   }
   snippets.forEach((snippet, index) => {
-    const item = createSnippetItem(snippet, index, onRemove, onSnippetClick);
+    const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet);
     list.appendChild(item);
   });
   return list;
@@ -648,13 +649,13 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick }) {
+function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
   const header = createPanelHeader({ onCopy, onClear, onClose, snippetCount: snippets.length });
-  const list = createSnippetList({ snippets, onRemove, onSnippetClick });
+  const list = createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet });
   const footer = createPanelFooter();
   panel.appendChild(header);
   panel.appendChild(list);
@@ -706,7 +707,7 @@ function createSelectionToolbar(selection, range) {
   
   const copyBtn = document.createElement('button');
   copyBtn.className = 'ce-toolbar-btn';
-  copyBtn.innerHTML = '<span class="ce-toolbar-icon">📋</span><span class="ce-toolbar-label">Copy</span>';
+  copyBtn.innerHTML = '<span class="ce-toolbar-icon">📋</span><span class="ce-toolbar-label">Copy to md</span>';
   copyBtn.setAttribute('aria-label', 'Copy as markdown');
   copyBtn.title = 'Copy as markdown';
   
@@ -783,7 +784,7 @@ function updateFABCount(fab, count) {
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   list.innerHTML = '';
@@ -794,7 +795,7 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick) {
     list.appendChild(emptyState);
   } else {
     snippets.forEach((snippet, index) => {
-      const item = createSnippetItem(snippet, index, onRemove, onSnippetClick);
+      const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet);
       list.appendChild(item);
     });
   }
@@ -861,7 +862,8 @@ function renderUI() {
     onClear: handleClear,
     onClose: handleClose,
     onRemove: handleRemove,
-    onSnippetClick: handleSnippetClick
+    onSnippetClick: handleSnippetClick,
+    onCopySnippet: handleCopySnippet
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   container.appendChild(panel);
@@ -872,7 +874,7 @@ function updateUI() {
     updateFABCount(fab, state.items.length);
   }
   if (panel) {
-    updatePanel(panel, state.items, handleRemove, handleSnippetClick);
+    updatePanel(panel, state.items, handleRemove, handleSnippetClick, handleCopySnippet);
   }
 }
 
@@ -968,16 +970,33 @@ async function handleCopy() {
     createToast('No snippets to copy');
     return;
   }
-  // Format snippets as markdown list with better formatting
+  // Format snippets as markdown with cleanup
   const markdown = state.items
     .map((snippet, index) => {
-      // Try to preserve any markdown formatting in the snippet text
-      return `${index + 1}. ${snippet.text}`;
+      // Clean up each snippet's markdown
+      const cleaned = cleanupMarkdown(snippet.text);
+      return cleaned;
     })
     .join('\n\n');
+  
+  // Apply final cleanup to the entire output
+  const finalMarkdown = cleanupMarkdown(markdown);
+  
   try {
-    await navigator.clipboard.writeText(markdown);
+    await navigator.clipboard.writeText(finalMarkdown);
     createToast(`Copied ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''} to clipboard`);
+  } catch (error) {
+    console.error('Failed to copy:', error);
+    createToast('Failed to copy to clipboard');
+  }
+}
+
+async function handleCopySnippet(snippet) {
+  try {
+    // Clean up the snippet's markdown
+    const cleaned = cleanupMarkdown(snippet.text);
+    await navigator.clipboard.writeText(cleaned);
+    createToast('Copied to clipboard');
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
@@ -996,6 +1015,8 @@ function togglePanel() {
   if (panel) {
     panel.classList.toggle('ce-panel-open', state.panelOpen);
   }
+  // Hide selection toolbar when opening/closing panel
+  hideSelectionToolbar();
 }
 
 function handleClose() {
