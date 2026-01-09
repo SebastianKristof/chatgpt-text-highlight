@@ -664,12 +664,45 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
   return list;
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, snippetCount, selectedCount, allSelected }) {
+function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, snippetCount, selectedCount, allSelected, searchQuery }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   const title = document.createElement('h2');
   title.className = 'ce-panel-title';
   title.textContent = 'Collected Snippets';
+  
+  // Search box
+  const searchContainer = document.createElement('div');
+  searchContainer.className = 'ce-search-container';
+  const searchWrapper = document.createElement('div');
+  searchWrapper.className = 'ce-search-wrapper';
+  
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'ce-search-input';
+  searchInput.placeholder = 'Search snippets...';
+  searchInput.value = searchQuery || '';
+  searchInput.setAttribute('aria-label', 'Search snippets');
+  searchInput.addEventListener('input', (e) => {
+    onSearch(e.target.value);
+  });
+  
+  const clearSearchBtn = document.createElement('button');
+  clearSearchBtn.className = 'ce-search-clear';
+  clearSearchBtn.innerHTML = '×';
+  clearSearchBtn.setAttribute('aria-label', 'Clear search');
+  clearSearchBtn.title = 'Clear search';
+  clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
+  clearSearchBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    searchInput.value = '';
+    onSearch('');
+  });
+  
+  searchWrapper.appendChild(searchInput);
+  searchWrapper.appendChild(clearSearchBtn);
+  searchContainer.appendChild(searchWrapper);
+  
   const actions = document.createElement('div');
   actions.className = 'ce-panel-actions';
   
@@ -710,6 +743,7 @@ function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, snippetCount
   actions.appendChild(clearBtn);
   actions.appendChild(closeBtn);
   header.appendChild(title);
+  header.appendChild(searchContainer);
   header.appendChild(actions);
   return header;
 }
@@ -721,7 +755,7 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, selectedIds }) {
+function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
@@ -732,9 +766,11 @@ function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetCl
     onClear, 
     onClose, 
     onSelectAll,
+    onSearch,
     snippetCount: snippets.length, 
     selectedCount: selectedIds ? selectedIds.size : 0,
-    allSelected
+    allSelected,
+    searchQuery
   });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds });
   const footer = createPanelFooter();
@@ -865,14 +901,18 @@ function updateFABCount(fab, count) {
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, selectedIds) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   list.innerHTML = '';
   if (snippets.length === 0) {
     const emptyState = document.createElement('div');
     emptyState.className = 'ce-empty-state';
-    emptyState.textContent = 'Select text to save a snippet';
+    if (searchQuery && searchQuery.trim()) {
+      emptyState.textContent = 'No snippets match your search';
+    } else {
+      emptyState.textContent = 'Select text to save a snippet';
+    }
     list.appendChild(emptyState);
   } else {
     snippets.forEach((snippet, index) => {
@@ -880,6 +920,16 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
       const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, isSelected);
       list.appendChild(item);
     });
+  }
+  
+  // Update search input and clear button
+  const searchInput = panel.querySelector('.ce-search-input');
+  const clearSearchBtn = panel.querySelector('.ce-search-clear');
+  if (searchInput && searchInput.value !== searchQuery) {
+    searchInput.value = searchQuery || '';
+  }
+  if (clearSearchBtn) {
+    clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
   }
   
   // Update header buttons
@@ -918,7 +968,8 @@ let state = {
   items: [], // All snippets across all conversations
   panelOpen: false,
   selectedIds: new Set(),
-  currentConversationId: null
+  currentConversationId: null,
+  searchQuery: ''
 };
 
 let container = null;
@@ -942,16 +993,29 @@ async function init() {
 }
 
 /**
- * Gets snippets for the current conversation.
+ * Gets snippets for the current conversation, optionally filtered by search query.
  * @returns {Array} Filtered snippets array
  */
 function getCurrentConversationSnippets() {
   const currentConvId = getConversationId();
+  let snippets = [];
+  
   if (!currentConvId) {
     // If no conversation ID, show all snippets (e.g., on main page)
-    return state.items;
+    snippets = state.items;
+  } else {
+    snippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
   }
-  return state.items.filter(snippet => snippet.conversationId === currentConvId);
+  
+  // Apply search filter if query exists
+  if (state.searchQuery && state.searchQuery.trim()) {
+    const query = state.searchQuery.toLowerCase().trim();
+    snippets = snippets.filter(snippet => 
+      snippet.text.toLowerCase().includes(query)
+    );
+  }
+  
+  return snippets;
 }
 
 /**
@@ -993,12 +1057,23 @@ async function persistState() {
 }
 
 function renderUI() {
+  // Get snippets without search filter for count (show total)
+  const currentConvId = getConversationId();
+  let totalSnippets = [];
+  if (!currentConvId) {
+    totalSnippets = state.items;
+  } else {
+    totalSnippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+  }
+  
+  // Get filtered snippets for display
   const currentSnippets = getCurrentConversationSnippets();
   
   if (fab && fab.parentNode) {
     fab.parentNode.removeChild(fab);
   }
-  fab = createFAB(currentSnippets.length, togglePanel);
+  // Show total count (not filtered)
+  fab = createFAB(totalSnippets.length, togglePanel);
   container.appendChild(fab);
   if (panel && panel.parentNode) {
     panel.parentNode.removeChild(panel);
@@ -1013,20 +1088,33 @@ function renderUI() {
     onCopySnippet: handleCopySnippet,
     onToggleSelect: handleToggleSelect,
     onSelectAll: handleSelectAll,
-    selectedIds: state.selectedIds
+    onSearch: handleSearch,
+    selectedIds: state.selectedIds,
+    searchQuery: state.searchQuery
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   container.appendChild(panel);
 }
 
 function updateUI() {
+  // Get total snippets for count (not filtered)
+  const currentConvId = getConversationId();
+  let totalSnippets = [];
+  if (!currentConvId) {
+    totalSnippets = state.items;
+  } else {
+    totalSnippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+  }
+  
+  // Get filtered snippets for display
   const currentSnippets = getCurrentConversationSnippets();
   
   if (fab) {
-    updateFABCount(fab, currentSnippets.length);
+    // Always show total count, not filtered count
+    updateFABCount(fab, totalSnippets.length);
   }
   if (panel) {
-    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, state.selectedIds);
+    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery);
   }
 }
 
@@ -1130,20 +1218,28 @@ function handleClear() {
 }
 
 async function handleCopy() {
-  const currentSnippets = getCurrentConversationSnippets();
+  // Get visible (filtered) snippets
+  const visibleSnippets = getCurrentConversationSnippets();
   
-  if (currentSnippets.length === 0) {
+  if (visibleSnippets.length === 0) {
     createToast('No snippets to copy');
     return;
   }
   
-  // Get snippets to copy (selected ones, or all current conversation snippets if none selected)
-  const snippetsToCopy = state.selectedIds.size > 0
-    ? currentSnippets.filter(snippet => state.selectedIds.has(snippet.id))
-    : currentSnippets;
+  // Get snippets to copy:
+  // - If any are selected, copy only the selected ones that are visible (filter takes precedence)
+  // - Otherwise, copy all visible (filtered) snippets
+  let snippetsToCopy = [];
+  if (state.selectedIds.size > 0) {
+    // Filter takes precedence: only copy selected snippets that are also visible
+    snippetsToCopy = visibleSnippets.filter(snippet => state.selectedIds.has(snippet.id));
+  } else {
+    // No selection - copy all visible (filtered) snippets
+    snippetsToCopy = visibleSnippets;
+  }
   
   if (snippetsToCopy.length === 0) {
-    createToast('No snippets selected');
+    createToast('No selected snippets visible');
     return;
   }
   
@@ -1194,6 +1290,13 @@ function handleSelectAll() {
   updateUI();
 }
 
+function handleSearch(query) {
+  state.searchQuery = query;
+  // Clear selections when searching (optional - you might want to keep them)
+  // state.selectedIds.clear();
+  updateUI();
+}
+
 async function handleCopySnippet(snippet) {
   try {
     // Clean up the snippet's markdown
@@ -1224,9 +1327,13 @@ function togglePanel() {
 
 function handleClose() {
   state.panelOpen = false;
+  // Clear search when closing panel
+  state.searchQuery = '';
   if (panel) {
     panel.classList.remove('ce-panel-open');
   }
+  // Update UI to show correct count
+  updateUI();
 }
 
 // Initialize when DOM is ready
