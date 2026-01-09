@@ -206,8 +206,21 @@ function buildSnippetFromSelection() {
   
   const range = selection.getRangeAt(0);
   const startNode = range.startContainer;
-  const messageBlock = findMessageBlock(startNode);
+  const endNode = range.endContainer;
+  
+  // Find message blocks for both start and end
+  const startMessageBlock = findMessageBlock(startNode);
+  const endMessageBlock = findMessageBlock(endNode);
+  
+  // Check if selection spans multiple messages
+  const spansMultipleMessages = startMessageBlock && endMessageBlock && 
+                                startMessageBlock !== endMessageBlock;
+  
+  // Use the start message block for anchor (or first one found)
+  const messageBlock = startMessageBlock || endMessageBlock;
+  
   if (!messageBlock) {
+    // No message block found - still create snippet but without anchor
     return {
       id: generateSnippetId(),
       text: finalText,
@@ -217,20 +230,30 @@ function buildSnippetFromSelection() {
       truncated
     };
   }
+  
   const messageId = getMessageId(messageBlock);
   const messageText = getMessageText(messageBlock);
   const conversationId = getConversationId();
-  const offsets = findSelectionOffsets(messageText, selectionText); // Use plain text for offsets
+  
+  // For cross-message selections, offsets won't be accurate, so we'll use prefix matching
+  let offsets = null;
+  if (!spansMultipleMessages) {
+    // Only try to find offsets if selection is within a single message
+    offsets = findSelectionOffsets(messageText, selectionText);
+  }
+  
   const selectionStart = offsets?.start ?? 0;
   const selectionEnd = offsets?.end ?? selectionText.length;
+  
   const anchor = buildAnchor({
     conversationId,
-    messageId,
-    messageText,
-    selectionText: selectionText, // Store plain text for matching
+    messageId: spansMultipleMessages ? null : messageId, // Don't use messageId for cross-message selections
+    messageText: spansMultipleMessages ? '' : messageText, // Don't use messageText for cross-message
+    selectionText: selectionText,
     selectionStart,
     selectionEnd
   });
+  
   return {
     id: generateSnippetId(),
     text: finalText, // Store markdown version
@@ -305,12 +328,18 @@ function navigateToSource(snippet) {
     return false;
   }
   const { anchor } = snippet;
-  if (anchor.conversationId) {
-    const currentConversationId = getConversationId();
-    if (currentConversationId && currentConversationId !== anchor.conversationId) {
-      return false;
+  
+  // Check if snippet is from a different conversation
+  const currentConversationId = getConversationId();
+  if (anchor.conversationId && currentConversationId && currentConversationId !== anchor.conversationId) {
+    // Try to navigate to the conversation
+    const conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
+    if (confirm(`This snippet is from a different conversation. Open that conversation?`)) {
+      window.open(conversationUrl, '_blank');
     }
+    return false;
   }
+  
   let messageBlock = null;
   if (anchor.messageId) {
     messageBlock = findMessageById(anchor.messageId);
@@ -322,6 +351,7 @@ function navigateToSource(snippet) {
     messageBlock = findMessageByPrefix(anchor.selectionPrefix);
   }
   if (!messageBlock) {
+    createToast('Source not found in current conversation');
     return false;
   }
   if (anchor.selectionOffsets) {
@@ -885,9 +915,10 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
 // ============================================================================
 
 let state = {
-  items: [],
+  items: [], // All snippets across all conversations
   panelOpen: false,
-  selectedIds: new Set()
+  selectedIds: new Set(),
+  currentConversationId: null
 };
 
 let container = null;
@@ -897,11 +928,49 @@ let panel = null;
 async function init() {
   container = createContainer();
   await loadState();
+  state.currentConversationId = getConversationId();
   renderUI();
   setupEventListeners();
-  if (state.items.length > 0) {
-    createToast(`Loaded ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+  
+  // Watch for conversation changes
+  watchConversationChanges();
+  
+  const currentSnippets = getCurrentConversationSnippets();
+  if (currentSnippets.length > 0) {
+    createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation`);
   }
+}
+
+/**
+ * Gets snippets for the current conversation.
+ * @returns {Array} Filtered snippets array
+ */
+function getCurrentConversationSnippets() {
+  const currentConvId = getConversationId();
+  if (!currentConvId) {
+    // If no conversation ID, show all snippets (e.g., on main page)
+    return state.items;
+  }
+  return state.items.filter(snippet => snippet.conversationId === currentConvId);
+}
+
+/**
+ * Watches for conversation changes and updates UI.
+ */
+function watchConversationChanges() {
+  let lastConversationId = getConversationId();
+  
+  // Check periodically for conversation changes
+  setInterval(() => {
+    const currentConvId = getConversationId();
+    if (currentConvId !== lastConversationId) {
+      lastConversationId = currentConvId;
+      state.currentConversationId = currentConvId;
+      // Clear selections when switching conversations
+      state.selectedIds.clear();
+      updateUI();
+    }
+  }, 1000);
 }
 
 async function loadState() {
@@ -924,16 +993,18 @@ async function persistState() {
 }
 
 function renderUI() {
+  const currentSnippets = getCurrentConversationSnippets();
+  
   if (fab && fab.parentNode) {
     fab.parentNode.removeChild(fab);
   }
-  fab = createFAB(state.items.length, togglePanel);
+  fab = createFAB(currentSnippets.length, togglePanel);
   container.appendChild(fab);
   if (panel && panel.parentNode) {
     panel.parentNode.removeChild(panel);
   }
   panel = createPanel({
-    snippets: state.items,
+    snippets: currentSnippets,
     onCopy: handleCopy,
     onClear: handleClear,
     onClose: handleClose,
@@ -949,11 +1020,13 @@ function renderUI() {
 }
 
 function updateUI() {
+  const currentSnippets = getCurrentConversationSnippets();
+  
   if (fab) {
-    updateFABCount(fab, state.items.length);
+    updateFABCount(fab, currentSnippets.length);
   }
   if (panel) {
-    updatePanel(panel, state.items, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, state.selectedIds);
+    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, state.selectedIds);
   }
 }
 
@@ -1036,26 +1109,38 @@ function handleRemove(id) {
 }
 
 function handleClear() {
-  if (state.items.length === 0) return;
-  if (confirm(`Clear all ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}?`)) {
-    state.items = [];
-    state.selectedIds.clear();
+  const currentSnippets = getCurrentConversationSnippets();
+  if (currentSnippets.length === 0) return;
+  
+  const currentConvId = getConversationId();
+  if (confirm(`Clear all ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation?`)) {
+    if (currentConvId) {
+      // Remove only snippets from current conversation
+      state.items = state.items.filter(snippet => snippet.conversationId !== currentConvId);
+    } else {
+      // No conversation ID, clear all
+      state.items = [];
+    }
+    // Remove cleared snippets from selection
+    currentSnippets.forEach(snippet => state.selectedIds.delete(snippet.id));
     updateUI();
     persistState();
-    createToast('All snippets cleared');
+    createToast(`Cleared ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
   }
 }
 
 async function handleCopy() {
-  if (state.items.length === 0) {
+  const currentSnippets = getCurrentConversationSnippets();
+  
+  if (currentSnippets.length === 0) {
     createToast('No snippets to copy');
     return;
   }
   
-  // Get snippets to copy (selected ones, or all if none selected)
+  // Get snippets to copy (selected ones, or all current conversation snippets if none selected)
   const snippetsToCopy = state.selectedIds.size > 0
-    ? state.items.filter(snippet => state.selectedIds.has(snippet.id))
-    : state.items;
+    ? currentSnippets.filter(snippet => state.selectedIds.has(snippet.id))
+    : currentSnippets;
   
   if (snippetsToCopy.length === 0) {
     createToast('No snippets selected');
@@ -1094,13 +1179,17 @@ function handleToggleSelect(snippetId) {
 }
 
 function handleSelectAll() {
-  const allSelected = state.selectedIds.size === state.items.length && state.items.length > 0;
+  const currentSnippets = getCurrentConversationSnippets();
+  const currentSnippetIds = new Set(currentSnippets.map(item => item.id));
+  const allSelected = currentSnippetIds.size > 0 && 
+                      Array.from(currentSnippetIds).every(id => state.selectedIds.has(id));
+  
   if (allSelected) {
-    // Deselect all
-    state.selectedIds.clear();
+    // Deselect all current conversation snippets
+    currentSnippetIds.forEach(id => state.selectedIds.delete(id));
   } else {
-    // Select all
-    state.selectedIds = new Set(state.items.map(item => item.id));
+    // Select all current conversation snippets
+    currentSnippetIds.forEach(id => state.selectedIds.add(id));
   }
   updateUI();
 }
