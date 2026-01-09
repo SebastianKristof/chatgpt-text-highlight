@@ -633,247 +633,32 @@ function createToast(message, duration = 3000) {
 }
 
 let selectionToolbar = null;
-let chatgptPopupObserver = null;
-
-function findChatGPTPopup() {
-  // Multiple strategies to find ChatGPT's popup
-  // Strategy 1: Look for aria-live="polite" with fixed positioning
-  const popups = document.querySelectorAll('[aria-live="polite"]');
-  for (const popup of popups) {
-    const style = window.getComputedStyle(popup);
-    if (style.position === 'fixed' || style.position === 'absolute') {
-      // Check if it contains buttons
-      const buttons = popup.querySelectorAll('button');
-      if (buttons.length > 0) {
-        console.log('[CE] Found ChatGPT popup via aria-live:', popup);
-        return popup;
-      }
-    }
-  }
-  
-  // Strategy 2: Look for elements with "Ask ChatGPT" text
-  const allElements = document.querySelectorAll('*');
-  for (const el of allElements) {
-    if (el.textContent && el.textContent.includes('Ask ChatGPT')) {
-      // Find the parent container that's fixed/absolute
-      let parent = el;
-      while (parent && parent !== document.body) {
-        const style = window.getComputedStyle(parent);
-        if ((style.position === 'fixed' || style.position === 'absolute') && 
-            (style.top !== 'auto' || style.left !== 'auto')) {
-          console.log('[CE] Found ChatGPT popup via text search:', parent);
-          return parent;
-        }
-        parent = parent.parentElement;
-      }
-    }
-  }
-  
-  // Strategy 3: Look for fixed elements with shadow-long class (ChatGPT's button style)
-  const shadowElements = document.querySelectorAll('.shadow-long');
-  for (const el of shadowElements) {
-    let parent = el;
-    while (parent && parent !== document.body) {
-      const style = window.getComputedStyle(parent);
-      if (style.position === 'fixed' && parent.querySelector('button')) {
-        console.log('[CE] Found ChatGPT popup via shadow-long:', parent);
-        return parent;
-      }
-      parent = parent.parentElement;
-    }
-  }
-  
-  console.log('[CE] ChatGPT popup not found');
-  return null;
-}
 
 function createSelectionToolbar(selection, range) {
   // Remove existing toolbar
   if (selectionToolbar) {
-    selectionToolbar.remove();
-    selectionToolbar = null;
+    hideSelectionToolbar();
   }
   
-  // Try to inject into ChatGPT's popup
-  function injectIntoChatGPTPopup() {
-    const chatgptPopup = findChatGPTPopup();
-    if (chatgptPopup) {
-      console.log('[CE] Found popup, attempting injection');
-      
-      // Check if we already added our buttons
-      const existing = chatgptPopup.querySelector('.ce-selection-buttons');
-      if (existing) {
-        console.log('[CE] Buttons already exist');
-        return true;
-      }
-      
-      // Try multiple strategies to find the button container
-      let buttonContainer = null;
-      
-      // Strategy 1: Look for the specific class combination
-      buttonContainer = chatgptPopup.querySelector('.shadow-long.flex.overflow-hidden.rounded-xl');
-      
-      // Strategy 2: Look for any div containing buttons
-      if (!buttonContainer) {
-        const buttons = chatgptPopup.querySelectorAll('button');
-        if (buttons.length > 0) {
-          // Find the parent container
-          let parent = buttons[0].parentElement;
-          while (parent && parent !== chatgptPopup) {
-            if (parent.classList.contains('flex') || parent.classList.contains('shadow-long')) {
-              buttonContainer = parent;
-              break;
-            }
-            parent = parent.parentElement;
-          }
-          // If no specific container, use the popup itself
-          if (!buttonContainer) {
-            buttonContainer = chatgptPopup;
-          }
-        }
-      }
-      
-      // Strategy 3: Just use the popup directly
-      if (!buttonContainer) {
-        buttonContainer = chatgptPopup;
-      }
-      
-      if (buttonContainer) {
-        console.log('[CE] Found button container:', buttonContainer);
-        
-        // Create our buttons container
-        const ourButtons = document.createElement('div');
-        ourButtons.className = 'ce-selection-buttons';
-        ourButtons.style.display = 'flex';
-        ourButtons.style.gap = '8px';
-        ourButtons.style.marginLeft = '8px';
-        ourButtons.style.alignItems = 'center';
-        
-        const saveBtn = document.createElement('button');
-        saveBtn.className = 'btn relative btn-secondary shadow-long flex rounded-xl border-none active:opacity-1';
-        saveBtn.style.cursor = 'pointer';
-        saveBtn.innerHTML = `
-          <div class="flex items-center justify-center">
-            <span class="flex items-center gap-1.5 select-none">
-              <span style="font-size: 16px;">💾</span>
-              <span class="whitespace-nowrap! select-none max-md:sr-only">Save snippet</span>
-            </span>
-          </div>
-        `;
-        saveBtn.setAttribute('aria-label', 'Save snippet');
-        
-        const copyBtn = document.createElement('button');
-        copyBtn.className = 'btn relative btn-secondary shadow-long flex rounded-xl border-none active:opacity-1';
-        copyBtn.style.cursor = 'pointer';
-        copyBtn.innerHTML = `
-          <div class="flex items-center justify-center">
-            <span class="flex items-center gap-1.5 select-none">
-              <span style="font-size: 16px;">📋</span>
-              <span class="whitespace-nowrap! select-none max-md:sr-only">Copy markdown</span>
-            </span>
-          </div>
-        `;
-        copyBtn.setAttribute('aria-label', 'Copy as markdown');
-        
-        // Event handlers
-        saveBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          console.log('[CE] Save button clicked');
-          const snippet = buildSnippetFromSelection();
-          if (snippet) {
-            addSnippet(snippet);
-            if (snippet.truncated) {
-              createToast('Snippet truncated (max 10,000 characters)');
-            } else {
-              createToast('Snippet saved');
-            }
-          }
-          window.getSelection().removeAllRanges();
-        });
-        
-        copyBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          console.log('[CE] Copy button clicked');
-          try {
-            const markdown = selectionToMarkdown(selection);
-            await navigator.clipboard.writeText(markdown);
-            createToast('Copied as markdown');
-          } catch (error) {
-            console.error('[CE] Failed to copy:', error);
-            createToast('Failed to copy to clipboard');
-          }
-          window.getSelection().removeAllRanges();
-        });
-        
-        ourButtons.appendChild(saveBtn);
-        ourButtons.appendChild(copyBtn);
-        buttonContainer.appendChild(ourButtons);
-        selectionToolbar = ourButtons;
-        console.log('[CE] Buttons injected successfully');
-        return true;
-      } else {
-        console.log('[CE] Could not find button container');
-      }
-    }
-    return false;
-  }
-  
-  console.log('[CE] Creating selection toolbar');
-  
-  // Try multiple times to catch ChatGPT's popup
-  let attempts = 0;
-  const maxAttempts = 20; // Increased attempts
-  
-  const tryInject = setInterval(() => {
-    attempts++;
-    console.log(`[CE] Injection attempt ${attempts}/${maxAttempts}`);
-    if (injectIntoChatGPTPopup()) {
-      clearInterval(tryInject);
-      return;
-    }
-    if (attempts >= maxAttempts) {
-      clearInterval(tryInject);
-      console.log('[CE] Max attempts reached, using fallback toolbar');
-      // Fallback: create our own toolbar
-      createFallbackToolbar(selection, range);
-    }
-  }, 150); // Slightly longer interval
-  
-  // Also try immediately
-  if (!injectIntoChatGPTPopup()) {
-    console.log('[CE] Immediate injection failed, will retry');
-  }
-}
-
-function createFallbackToolbar(selection, range) {
+  // Create elegant toolbar near the FAB
   const toolbar = document.createElement('div');
   toolbar.className = 'ce-selection-toolbar';
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', 'Selection actions');
   
   const saveBtn = document.createElement('button');
-  saveBtn.className = 'ce-btn ce-btn-secondary ce-toolbar-btn';
-  saveBtn.innerHTML = '<span>💾</span> Save snippet';
+  saveBtn.className = 'ce-toolbar-btn';
+  saveBtn.innerHTML = '<span class="ce-toolbar-icon">💾</span><span class="ce-toolbar-label">Save</span>';
   saveBtn.setAttribute('aria-label', 'Save snippet');
+  saveBtn.title = 'Save snippet';
   
   const copyBtn = document.createElement('button');
-  copyBtn.className = 'ce-btn ce-btn-secondary ce-toolbar-btn';
-  copyBtn.innerHTML = '<span>📋</span> Copy as markdown';
+  copyBtn.className = 'ce-toolbar-btn';
+  copyBtn.innerHTML = '<span class="ce-toolbar-icon">📋</span><span class="ce-toolbar-label">Copy</span>';
   copyBtn.setAttribute('aria-label', 'Copy as markdown');
+  copyBtn.title = 'Copy as markdown';
   
-  const rect = range.getBoundingClientRect();
-  const scrollY = window.scrollY || window.pageYOffset;
-  const scrollX = window.scrollX || window.pageXOffset;
-  
-  toolbar.style.top = `${rect.top + scrollY - 8}px`;
-  toolbar.style.left = `${rect.left + scrollX + (rect.width / 2)}px`;
-  toolbar.style.transform = 'translate(-50%, -100%)';
-  
-  toolbar.appendChild(saveBtn);
-  toolbar.appendChild(copyBtn);
-  
+  // Event handlers
   saveBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -905,10 +690,22 @@ function createFallbackToolbar(selection, range) {
     window.getSelection().removeAllRanges();
   });
   
+  toolbar.appendChild(saveBtn);
+  toolbar.appendChild(copyBtn);
+  
   const container = document.getElementById(CONTAINER_ID) || createContainer();
   container.appendChild(toolbar);
   selectionToolbar = toolbar;
   
+  // Position relative to FAB
+  if (fab) {
+    const fabRect = fab.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    toolbar.style.left = `${fabRect.left - containerRect.left - toolbar.offsetWidth - 12}px`;
+    toolbar.style.top = `${fabRect.top - containerRect.top}px`;
+  }
+  
+  // Animate in
   requestAnimationFrame(() => {
     toolbar.classList.add('ce-toolbar-show');
   });
@@ -916,21 +713,13 @@ function createFallbackToolbar(selection, range) {
 
 function hideSelectionToolbar() {
   if (selectionToolbar) {
-    // If it's in ChatGPT's popup, just remove our buttons
-    if (selectionToolbar.classList.contains('ce-selection-buttons')) {
-      if (selectionToolbar.parentNode) {
+    selectionToolbar.classList.remove('ce-toolbar-show');
+    setTimeout(() => {
+      if (selectionToolbar && selectionToolbar.parentNode) {
         selectionToolbar.parentNode.removeChild(selectionToolbar);
       }
-    } else {
-      // Fallback toolbar
-      selectionToolbar.classList.remove('ce-toolbar-show');
-      setTimeout(() => {
-        if (selectionToolbar && selectionToolbar.parentNode) {
-          selectionToolbar.parentNode.removeChild(selectionToolbar);
-        }
-      }, 200);
-    }
-    selectionToolbar = null;
+      selectionToolbar = null;
+    }, 200);
   }
 }
 
@@ -1038,12 +827,9 @@ function updateUI() {
 function setupEventListeners() {
   document.addEventListener('mouseup', handleSelection);
   document.addEventListener('mousedown', (e) => {
-    // Hide toolbar when clicking outside (but not if it's in ChatGPT's popup)
-    if (selectionToolbar && !selectionToolbar.contains(e.target)) {
-      // Only hide if it's our fallback toolbar, not if it's integrated into ChatGPT's popup
-      if (!selectionToolbar.classList.contains('ce-selection-buttons')) {
-        hideSelectionToolbar();
-      }
+    // Hide toolbar when clicking outside
+    if (selectionToolbar && !selectionToolbar.contains(e.target) && !fab.contains(e.target)) {
+      hideSelectionToolbar();
     }
   });
   document.addEventListener('keydown', (e) => {
@@ -1059,33 +845,10 @@ function setupEventListeners() {
       handleClose();
     }
   });
-  // Hide toolbar on scroll (only fallback, ChatGPT's popup handles its own)
+  // Hide toolbar on scroll
   document.addEventListener('scroll', () => {
-    if (selectionToolbar && !selectionToolbar.classList.contains('ce-selection-buttons')) {
-      hideSelectionToolbar();
-    }
+    hideSelectionToolbar();
   }, true);
-  
-  // Watch for ChatGPT popup appearing/disappearing
-  if (typeof MutationObserver !== 'undefined') {
-    chatgptPopupObserver = new MutationObserver((mutations) => {
-      // When ChatGPT's popup is removed, clean up our buttons
-      mutations.forEach((mutation) => {
-        mutation.removedNodes.forEach((node) => {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node.querySelector && node.querySelector('.ce-selection-buttons')) {
-              selectionToolbar = null;
-            }
-          }
-        });
-      });
-    });
-    
-    chatgptPopupObserver.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-  }
 }
 
 function handleSelection(e) {
@@ -1095,8 +858,6 @@ function handleSelection(e) {
       hideSelectionToolbar();
       return;
     }
-    
-    console.log('[CE] Selection detected');
     
     // Don't show toolbar if clicking in extension UI
     if (container && container.contains(e.target)) {
@@ -1122,9 +883,9 @@ function handleSelection(e) {
       }
     }
     
-    // Show selection toolbar
+    // Show selection toolbar near FAB
     createSelectionToolbar(selection, range);
-  }, 50); // Slightly longer delay to let ChatGPT's popup appear first
+  }, 10);
 }
 
 function addSnippet(snippet) {

@@ -240,32 +240,62 @@
   text-align: center;
 }
 
-/* Selection Toolbar - Integrated into ChatGPT popup */
-.ce-selection-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-/* Selection Toolbar - Fallback standalone */
+/* Selection Toolbar - Elegant toolbar near FAB */
 .ce-selection-toolbar {
   position: absolute;
   display: flex;
-  gap: 8px;
-  padding: 6px;
+  gap: 6px;
+  padding: 8px;
   background: white;
   border: 1px solid #e5e5e5;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   pointer-events: auto;
   opacity: 0;
-  transform: translate(-50%, calc(-100% - 5px));
+  transform: translateX(10px);
   transition: all 0.2s ease;
   z-index: 1000001;
+  align-items: center;
 }
 
 .ce-selection-toolbar.ce-toolbar-show {
   opacity: 1;
-  transform: translate(-50%, -100%);
+  transform: translateX(0);
+}
+
+.ce-toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #10a37f;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.ce-toolbar-btn:hover {
+  background: #0d8f6e;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.ce-toolbar-btn:active {
+  transform: translateY(0);
+}
+
+.ce-toolbar-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.ce-toolbar-label {
+  font-weight: 500;
 }
 
 .ce-toolbar-btn {
@@ -337,11 +367,17 @@
   .ce-selection-toolbar {
     flex-direction: column;
     max-width: calc(100vw - 40px);
+    right: 80px;
+    left: auto;
   }
   
   .ce-toolbar-btn {
     width: 100%;
     justify-content: center;
+  }
+  
+  .ce-toolbar-label {
+    display: none;
   }
 
   .ce-panel-header {
