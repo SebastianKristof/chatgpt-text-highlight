@@ -383,6 +383,7 @@ function navigateToSource(snippet) {
 /**
  * Converts a DOM selection to markdown, preserving formatting.
  * Handles code blocks, lists, headings, bold, italic, etc.
+ * Removes extra empty lines and preserves structure.
  */
 function selectionToMarkdown(selection) {
   if (!selection || selection.rangeCount === 0) return '';
@@ -403,7 +404,19 @@ function selectionToMarkdown(selection) {
   tempDiv.appendChild(clonedRange.cloneContents());
   
   // Convert to markdown
-  return elementToMarkdown(tempDiv);
+  let markdown = elementToMarkdown(tempDiv);
+  
+  // Clean up extra empty lines (max 2 consecutive newlines)
+  markdown = markdown.replace(/\n{3,}/g, '\n\n');
+  
+  // Remove leading/trailing empty lines
+  markdown = markdown.replace(/^\n+|\n+$/g, '');
+  
+  // Clean up empty lines around list items (keep single line between items)
+  markdown = markdown.replace(/(\n{2,})([-*+]|\d+\.)/g, '\n$2');
+  markdown = markdown.replace(/([-*+]|\d+\.)(\n{2,})/g, '$1\n');
+  
+  return markdown;
 }
 
 function elementToMarkdown(element) {
@@ -412,16 +425,32 @@ function elementToMarkdown(element) {
   let markdown = '';
   const nodes = Array.from(element.childNodes);
   
-  for (const node of nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const nextNode = nodes[i + 1];
+    
     if (node.nodeType === Node.TEXT_NODE) {
-      markdown += node.textContent;
+      const text = node.textContent;
+      // Preserve text but normalize whitespace within text nodes
+      markdown += text;
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const tagName = node.tagName.toLowerCase();
       const text = elementToMarkdown(node);
       
       switch (tagName) {
         case 'p':
-          markdown += text + '\n\n';
+          if (text.trim()) {
+            markdown += text.trim();
+            // Only add newlines if next element is not a list or heading
+            const isNextList = nextNode && nextNode.nodeType === Node.ELEMENT_NODE && 
+                              (nextNode.tagName?.toLowerCase() === 'ul' || 
+                               nextNode.tagName?.toLowerCase() === 'ol');
+            if (!isNextList) {
+              markdown += '\n\n';
+            } else {
+              markdown += '\n';
+            }
+          }
           break;
         case 'br':
           markdown += '\n';
@@ -445,33 +474,56 @@ function elementToMarkdown(element) {
         case 'pre':
           const codeElement = node.querySelector('code');
           const codeText = codeElement ? codeElement.textContent : node.textContent;
-          markdown += '\n```\n' + codeText + '\n```\n';
+          markdown += '\n```\n' + codeText.trim() + '\n```\n';
           break;
         case 'h1':
-          markdown += `# ${text}\n\n`;
+          markdown += `# ${text.trim()}\n\n`;
           break;
         case 'h2':
-          markdown += `## ${text}\n\n`;
+          markdown += `## ${text.trim()}\n\n`;
           break;
         case 'h3':
-          markdown += `### ${text}\n\n`;
+          markdown += `### ${text.trim()}\n\n`;
           break;
         case 'ul':
         case 'ol':
           const items = Array.from(node.querySelectorAll('li'));
           items.forEach((item, index) => {
             const itemText = elementToMarkdown(item).trim();
-            const prefix = tagName === 'ol' ? `${index + 1}. ` : '- ';
-            markdown += prefix + itemText + '\n';
+            if (itemText) {
+              const prefix = tagName === 'ol' ? `${index + 1}. ` : '- ';
+              markdown += prefix + itemText + '\n';
+            }
           });
-          markdown += '\n';
+          // Only add newline if there are items and next element exists
+          if (items.length > 0 && nextNode) {
+            markdown += '\n';
+          }
           break;
         case 'li':
-          markdown += text;
+          // Handle nested lists and content
+          const childNodes = Array.from(node.childNodes);
+          let liContent = '';
+          for (const child of childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+              liContent += child.textContent;
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+              const childTag = child.tagName?.toLowerCase();
+              if (childTag === 'ul' || childTag === 'ol') {
+                // Nested list - add newline before
+                liContent += '\n' + elementToMarkdown(child);
+              } else {
+                liContent += elementToMarkdown(child);
+              }
+            }
+          }
+          markdown += liContent.trim();
           break;
         case 'blockquote':
           const lines = text.split('\n').filter(l => l.trim());
-          markdown += lines.map(l => `> ${l}`).join('\n') + '\n\n';
+          if (lines.length > 0) {
+            markdown += lines.map(l => `> ${l.trim()}`).join('\n') + '\n\n';
+          }
           break;
         default:
           markdown += text;
@@ -648,9 +700,9 @@ function createSelectionToolbar(selection, range) {
   
   const saveBtn = document.createElement('button');
   saveBtn.className = 'ce-toolbar-btn';
-  saveBtn.innerHTML = '<span class="ce-toolbar-icon">💾</span><span class="ce-toolbar-label">Save</span>';
-  saveBtn.setAttribute('aria-label', 'Save snippet');
-  saveBtn.title = 'Save snippet';
+  saveBtn.innerHTML = '<span class="ce-toolbar-icon">💾</span><span class="ce-toolbar-label">Collect</span>';
+  saveBtn.setAttribute('aria-label', 'Collect snippet');
+  saveBtn.title = 'Collect snippet';
   
   const copyBtn = document.createElement('button');
   copyBtn.className = 'ce-toolbar-btn';
