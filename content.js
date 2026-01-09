@@ -634,7 +634,7 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
   return list;
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, snippetCount, selectedCount }) {
+function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, snippetCount, selectedCount, allSelected }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   const title = document.createElement('h2');
@@ -642,6 +642,14 @@ function createPanelHeader({ onCopy, onClear, onClose, snippetCount, selectedCou
   title.textContent = 'Collected Snippets';
   const actions = document.createElement('div');
   actions.className = 'ce-panel-actions';
+  
+  const selectAllBtn = document.createElement('button');
+  selectAllBtn.className = 'ce-btn';
+  selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
+  selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
+  selectAllBtn.addEventListener('click', onSelectAll);
+  selectAllBtn.disabled = snippetCount === 0;
+  
   const copyBtn = document.createElement('button');
   copyBtn.className = 'ce-btn ce-btn-secondary';
   if (selectedCount > 0) {
@@ -653,17 +661,21 @@ function createPanelHeader({ onCopy, onClear, onClose, snippetCount, selectedCou
   }
   copyBtn.addEventListener('click', onCopy);
   copyBtn.disabled = snippetCount === 0;
+  
   const clearBtn = document.createElement('button');
   clearBtn.className = 'ce-btn ce-btn-secondary';
   clearBtn.textContent = 'Clear';
   clearBtn.setAttribute('aria-label', 'Clear all snippets');
   clearBtn.addEventListener('click', onClear);
   clearBtn.disabled = snippetCount === 0;
+  
   const closeBtn = document.createElement('button');
   closeBtn.className = 'ce-btn ce-btn-icon';
   closeBtn.setAttribute('aria-label', 'Close panel');
   closeBtn.innerHTML = '×';
   closeBtn.addEventListener('click', onClose);
+  
+  actions.appendChild(selectAllBtn);
   actions.appendChild(copyBtn);
   actions.appendChild(clearBtn);
   actions.appendChild(closeBtn);
@@ -679,12 +691,21 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds }) {
+function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, selectedIds }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
-  const header = createPanelHeader({ onCopy, onClear, onClose, snippetCount: snippets.length, selectedCount: selectedIds ? selectedIds.size : 0 });
+  const allSelected = selectedIds && selectedIds.size === snippets.length && snippets.length > 0;
+  const header = createPanelHeader({ 
+    onCopy, 
+    onClear, 
+    onClose, 
+    onSelectAll,
+    snippetCount: snippets.length, 
+    selectedCount: selectedIds ? selectedIds.size : 0,
+    allSelected
+  });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds });
   const footer = createPanelFooter();
   panel.appendChild(header);
@@ -814,7 +835,7 @@ function updateFABCount(fab, count) {
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, selectedIds) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   list.innerHTML = '';
@@ -831,9 +852,20 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     });
   }
   
-  // Update copy button text and state
+  // Update header buttons
+  const selectAllBtn = panel.querySelector('.ce-btn:not(.ce-btn-secondary):not(.ce-btn-icon)');
   const copyBtn = panel.querySelector('.ce-btn-secondary');
   const clearBtn = panel.querySelector('.ce-btn[aria-label="Clear all snippets"]');
+  
+  if (selectAllBtn) {
+    const allSelected = selectedIds && selectedIds.size === snippets.length && snippets.length > 0;
+    selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
+    selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
+    selectAllBtn.disabled = snippets.length === 0;
+    // Update click handler
+    selectAllBtn.onclick = onSelectAll;
+  }
+  
   if (copyBtn) {
     const selectedCount = selectedIds ? selectedIds.size : 0;
     if (selectedCount > 0) {
@@ -909,6 +941,7 @@ function renderUI() {
     onSnippetClick: handleSnippetClick,
     onCopySnippet: handleCopySnippet,
     onToggleSelect: handleToggleSelect,
+    onSelectAll: handleSelectAll,
     selectedIds: state.selectedIds
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
@@ -920,7 +953,7 @@ function updateUI() {
     updateFABCount(fab, state.items.length);
   }
   if (panel) {
-    updatePanel(panel, state.items, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, state.selectedIds);
+    updatePanel(panel, state.items, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, state.selectedIds);
   }
 }
 
@@ -1056,6 +1089,18 @@ function handleToggleSelect(snippetId) {
     state.selectedIds.delete(snippetId);
   } else {
     state.selectedIds.add(snippetId);
+  }
+  updateUI();
+}
+
+function handleSelectAll() {
+  const allSelected = state.selectedIds.size === state.items.length && state.items.length > 0;
+  if (allSelected) {
+    // Deselect all
+    state.selectedIds.clear();
+  } else {
+    // Select all
+    state.selectedIds = new Set(state.items.map(item => item.id));
   }
   updateUI();
 }
