@@ -1,0 +1,21 @@
+{
+  "name": "chatgpt-text-highlight",
+  "version": "1.0.0",
+  "description": "Chrome/Edge extension for collecting text snippets from ChatGPT conversations",
+  "type": "module",
+  "scripts": {
+    "test": "vitest",
+    "test:watch": "vitest --watch"
+  },
+  "keywords": [
+    "chrome-extension",
+    "chatgpt",
+    "text-highlight",
+    "snippets"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  }
+}
