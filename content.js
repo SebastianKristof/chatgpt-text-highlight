@@ -188,14 +188,22 @@ function buildSnippetFromSelection() {
   if (isSelectionInExtensionUI(selection)) {
     return null;
   }
+  
+  // Get both plain text and markdown versions
   const selectionText = getSelectionText();
   if (!selectionText) return null;
-  let finalText = selectionText;
+  
+  // Convert to markdown to preserve formatting
+  const markdownText = selectionToMarkdown(selection);
+  const cleanedMarkdown = cleanupMarkdown(markdownText);
+  
+  let finalText = cleanedMarkdown;
   let truncated = false;
   if (finalText.length > MAX_SELECTION_SIZE) {
     finalText = finalText.substring(0, MAX_SELECTION_SIZE);
     truncated = true;
   }
+  
   const range = selection.getRangeAt(0);
   const startNode = range.startContainer;
   const messageBlock = findMessageBlock(startNode);
@@ -212,20 +220,20 @@ function buildSnippetFromSelection() {
   const messageId = getMessageId(messageBlock);
   const messageText = getMessageText(messageBlock);
   const conversationId = getConversationId();
-  const offsets = findSelectionOffsets(messageText, finalText);
+  const offsets = findSelectionOffsets(messageText, selectionText); // Use plain text for offsets
   const selectionStart = offsets?.start ?? 0;
-  const selectionEnd = offsets?.end ?? finalText.length;
+  const selectionEnd = offsets?.end ?? selectionText.length;
   const anchor = buildAnchor({
     conversationId,
     messageId,
     messageText,
-    selectionText: finalText,
+    selectionText: selectionText, // Store plain text for matching
     selectionStart,
     selectionEnd
   });
   return {
     id: generateSnippetId(),
-    text: finalText,
+    text: finalText, // Store markdown version
     conversationId,
     anchor,
     timestamp: Date.now(),
@@ -545,16 +553,31 @@ function createFAB(count, onClick) {
   return fab;
 }
 
-function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy) {
+function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onToggleSelect, isSelected) {
   const item = document.createElement('div');
   item.className = 'ce-snippet-item';
+  if (isSelected) {
+    item.classList.add('ce-snippet-selected');
+  }
   item.setAttribute('data-snippet-id', snippet.id);
+  
+  // Checkbox for multi-select
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = 'ce-snippet-checkbox';
+  checkbox.checked = isSelected || false;
+  checkbox.addEventListener('change', (e) => {
+    e.stopPropagation();
+    onToggleSelect(snippet.id);
+  });
+  
   const text = document.createElement('div');
   text.className = 'ce-snippet-text';
   text.textContent = snippet.text;
   text.setAttribute('title', snippet.text);
   text.style.cursor = 'pointer';
   text.addEventListener('click', () => onSnippetClick(snippet));
+  
   const meta = document.createElement('div');
   meta.className = 'ce-snippet-meta';
   const timestamp = new Date(snippet.timestamp);
@@ -586,13 +609,14 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy) {
   actions.appendChild(copyBtn);
   actions.appendChild(removeBtn);
   
+  item.appendChild(checkbox);
   item.appendChild(text);
   item.appendChild(meta);
   item.appendChild(actions);
   return item;
 }
 
-function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet }) {
+function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds }) {
   const list = document.createElement('div');
   list.className = 'ce-snippet-list';
   if (snippets.length === 0) {
@@ -603,13 +627,14 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet }
     return list;
   }
   snippets.forEach((snippet, index) => {
-    const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet);
+    const isSelected = selectedIds && selectedIds.has(snippet.id);
+    const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, isSelected);
     list.appendChild(item);
   });
   return list;
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, snippetCount }) {
+function createPanelHeader({ onCopy, onClear, onClose, snippetCount, selectedCount }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   const title = document.createElement('h2');
@@ -619,8 +644,13 @@ function createPanelHeader({ onCopy, onClear, onClose, snippetCount }) {
   actions.className = 'ce-panel-actions';
   const copyBtn = document.createElement('button');
   copyBtn.className = 'ce-btn ce-btn-secondary';
-  copyBtn.textContent = 'Copy';
-  copyBtn.setAttribute('aria-label', 'Copy all snippets');
+  if (selectedCount > 0) {
+    copyBtn.textContent = `Copy (${selectedCount})`;
+    copyBtn.setAttribute('aria-label', `Copy ${selectedCount} selected snippets`);
+  } else {
+    copyBtn.textContent = 'Copy All';
+    copyBtn.setAttribute('aria-label', 'Copy all snippets');
+  }
   copyBtn.addEventListener('click', onCopy);
   copyBtn.disabled = snippetCount === 0;
   const clearBtn = document.createElement('button');
@@ -649,13 +679,13 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet }) {
+function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
-  const header = createPanelHeader({ onCopy, onClear, onClose, snippetCount: snippets.length });
-  const list = createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet });
+  const header = createPanelHeader({ onCopy, onClear, onClose, snippetCount: snippets.length, selectedCount: selectedIds ? selectedIds.size : 0 });
+  const list = createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds });
   const footer = createPanelFooter();
   panel.appendChild(header);
   panel.appendChild(list);
@@ -784,7 +814,7 @@ function updateFABCount(fab, count) {
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   list.innerHTML = '';
@@ -795,13 +825,26 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet) {
     list.appendChild(emptyState);
   } else {
     snippets.forEach((snippet, index) => {
-      const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet);
+      const isSelected = selectedIds && selectedIds.has(snippet.id);
+      const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, isSelected);
       list.appendChild(item);
     });
   }
-  const copyBtn = panel.querySelector('.ce-btn[aria-label="Copy all snippets"]');
+  
+  // Update copy button text and state
+  const copyBtn = panel.querySelector('.ce-btn-secondary');
   const clearBtn = panel.querySelector('.ce-btn[aria-label="Clear all snippets"]');
-  if (copyBtn) copyBtn.disabled = snippets.length === 0;
+  if (copyBtn) {
+    const selectedCount = selectedIds ? selectedIds.size : 0;
+    if (selectedCount > 0) {
+      copyBtn.textContent = `Copy (${selectedCount})`;
+      copyBtn.setAttribute('aria-label', `Copy ${selectedCount} selected snippets`);
+    } else {
+      copyBtn.textContent = 'Copy All';
+      copyBtn.setAttribute('aria-label', 'Copy all snippets');
+    }
+    copyBtn.disabled = snippets.length === 0;
+  }
   if (clearBtn) clearBtn.disabled = snippets.length === 0;
 }
 
@@ -811,7 +854,8 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet) {
 
 let state = {
   items: [],
-  panelOpen: false
+  panelOpen: false,
+  selectedIds: new Set()
 };
 
 let container = null;
@@ -863,7 +907,9 @@ function renderUI() {
     onClose: handleClose,
     onRemove: handleRemove,
     onSnippetClick: handleSnippetClick,
-    onCopySnippet: handleCopySnippet
+    onCopySnippet: handleCopySnippet,
+    onToggleSelect: handleToggleSelect,
+    selectedIds: state.selectedIds
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   container.appendChild(panel);
@@ -874,7 +920,7 @@ function updateUI() {
     updateFABCount(fab, state.items.length);
   }
   if (panel) {
-    updatePanel(panel, state.items, handleRemove, handleSnippetClick, handleCopySnippet);
+    updatePanel(panel, state.items, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, state.selectedIds);
   }
 }
 
@@ -950,6 +996,7 @@ function addSnippet(snippet) {
 
 function handleRemove(id) {
   state.items = state.items.filter(item => item.id !== id);
+  state.selectedIds.delete(id); // Remove from selection if it was selected
   updateUI();
   persistState();
   createToast('Snippet removed');
@@ -959,6 +1006,7 @@ function handleClear() {
   if (state.items.length === 0) return;
   if (confirm(`Clear all ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}?`)) {
     state.items = [];
+    state.selectedIds.clear();
     updateUI();
     persistState();
     createToast('All snippets cleared');
@@ -970,9 +1018,20 @@ async function handleCopy() {
     createToast('No snippets to copy');
     return;
   }
+  
+  // Get snippets to copy (selected ones, or all if none selected)
+  const snippetsToCopy = state.selectedIds.size > 0
+    ? state.items.filter(snippet => state.selectedIds.has(snippet.id))
+    : state.items;
+  
+  if (snippetsToCopy.length === 0) {
+    createToast('No snippets selected');
+    return;
+  }
+  
   // Format snippets as markdown with cleanup
-  const markdown = state.items
-    .map((snippet, index) => {
+  const markdown = snippetsToCopy
+    .map((snippet) => {
       // Clean up each snippet's markdown
       const cleaned = cleanupMarkdown(snippet.text);
       return cleaned;
@@ -984,11 +1043,21 @@ async function handleCopy() {
   
   try {
     await navigator.clipboard.writeText(finalMarkdown);
-    createToast(`Copied ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''} to clipboard`);
+    const count = snippetsToCopy.length;
+    createToast(`Copied ${count} snippet${count !== 1 ? 's' : ''} to clipboard`);
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
   }
+}
+
+function handleToggleSelect(snippetId) {
+  if (state.selectedIds.has(snippetId)) {
+    state.selectedIds.delete(snippetId);
+  } else {
+    state.selectedIds.add(snippetId);
+  }
+  updateUI();
 }
 
 async function handleCopySnippet(snippet) {
