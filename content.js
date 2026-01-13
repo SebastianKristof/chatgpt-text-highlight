@@ -104,11 +104,23 @@ async function saveSnippets(snippets) {
 const MAX_SELECTION_SIZE = 10000;
 
 function getConversationId() {
-  const url = window.location.href;
-  const match1 = url.match(/\/c\/([a-f0-9-]+)/);
-  if (match1) return match1[1];
-  const match2 = url.match(/[?&]conversationId=([^&]+)/);
-  if (match2) return match2[1];
+  return getConversationIdFromUrl(window.location.href);
+}
+
+function getConversationIdFromUrl(url) {
+  if (!url) return null;
+  
+  // Prefer the last /c/{id} segment in the URL.
+  // This supports URLs like /g/.../c/<uuid> and /c/WEB:<id>.
+  const matches = Array.from(String(url).matchAll(/\/c\/([^/?#]+)/g));
+  if (matches.length > 0) {
+    return decodeURIComponent(matches[matches.length - 1][1]);
+  }
+  
+  // Fallback: query param
+  const match2 = String(url).match(/[?&]conversationId=([^&]+)/);
+  if (match2) return decodeURIComponent(match2[1]);
+  
   return null;
 }
 
@@ -329,17 +341,6 @@ function navigateToSource(snippet) {
   }
   const { anchor } = snippet;
   
-  // Check if snippet is from a different conversation
-  const currentConversationId = getConversationId();
-  if (anchor.conversationId && currentConversationId && currentConversationId !== anchor.conversationId) {
-    // Try to navigate to the conversation
-    const conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
-    if (confirm(`This snippet is from a different conversation. Open that conversation?`)) {
-      window.open(conversationUrl, '_blank');
-    }
-    return false;
-  }
-  
   let messageBlock = null;
   if (anchor.messageId) {
     messageBlock = findMessageById(anchor.messageId);
@@ -351,7 +352,17 @@ function navigateToSource(snippet) {
     messageBlock = findMessageByPrefix(anchor.selectionPrefix);
   }
   if (!messageBlock) {
-    createToast('Source not found in current conversation');
+    // If we couldn't find it in-page and we know the snippet came from another conversation,
+    // offer to open the original conversation (user gesture: snippet click).
+    const currentConversationId = getConversationId();
+    if (anchor.conversationId && currentConversationId && currentConversationId !== anchor.conversationId) {
+      const conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
+      if (confirm('This snippet is from a different conversation. Open that conversation?')) {
+        window.open(conversationUrl, '_blank');
+      }
+      return false;
+    }
+    createToast('Source not found');
     return false;
   }
   if (anchor.selectionOffsets) {
@@ -969,12 +980,223 @@ let state = {
   panelOpen: false,
   selectedIds: new Set(),
   currentConversationId: null,
-  searchQuery: ''
+  searchQuery: '',
+  // When ChatGPT navigates to a new thread, it can take a moment for the URL to include the new conversationId.
+  // We track the previous conversation so we can offer to copy snippets forward once the new ID exists.
+  pendingTransferFromConversationId: null,
+  pendingTransferFromMessageHashes: null,
+  // Set when the user explicitly clicks ChatGPT's "Branch in new chat" menu item.
+  // Used to avoid heuristics when we *know* the next navigation is a branch.
+  pendingExplicitBranch: null,
+  lastAutoTransferKey: null,
+  lastTransferPromptKey: null
 };
 
 let container = null;
 let fab = null;
 let panel = null;
+
+// ============================================================================
+// Branch detection helpers
+// ============================================================================
+
+function getConversationMessageHashes(maxMessages = 10) {
+  try {
+    const blocks = Array.from(document.querySelectorAll('[data-message-id], [data-message-author-role]'));
+    const hashes = [];
+    for (const block of blocks) {
+      if (hashes.length >= maxMessages) break;
+      const text = getMessageText(block);
+      if (!text) continue;
+      hashes.push(hashText(text));
+    }
+    return hashes;
+  } catch (e) {
+    return [];
+  }
+}
+
+function isLikelyBranch(previousHashes, currentHashes) {
+  if (!previousHashes?.length || !currentHashes?.length) return false;
+  const prevSet = new Set(previousHashes);
+  let intersection = 0;
+  for (const h of currentHashes) {
+    if (prevSet.has(h)) intersection++;
+  }
+  const denom = Math.min(previousHashes.length, currentHashes.length);
+  if (denom === 0) return false;
+  
+  // Heuristic: branched threads share most early messages.
+  // Require at least 3 shared messages and >=60% overlap on the smaller sample.
+  return intersection >= 3 && (intersection / denom) >= 0.6;
+}
+
+function installBranchInNewChatObserver() {
+  const BRANCH_TEXT_PATTERNS = [/^branch in new chat$/i];
+  
+  function looksLikeBranchMenuItem(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+    // Prefer stable accessibility attributes when present (Radix menu items commonly use these).
+    const ariaLabel = (el.getAttribute?.('aria-label') || '').trim();
+    if (ariaLabel && BRANCH_TEXT_PATTERNS.some((re) => re.test(ariaLabel))) return true;
+    
+    const text = (el.textContent || '').trim();
+    if (!text) return false;
+    return BRANCH_TEXT_PATTERNS.some((re) => re.test(text));
+  }
+  
+  function attachHandler(el) {
+    if (!el || el.dataset?.ceBranchHandlerAttached) return;
+    el.dataset.ceBranchHandlerAttached = '1';
+    
+    el.addEventListener('click', () => {
+      const fromConversationId = getConversationId();
+      if (!fromConversationId) return;
+      state.pendingExplicitBranch = {
+        fromConversationId,
+        at: Date.now(),
+        fromMessageHashes: getConversationMessageHashes(10)
+      };
+    }, { capture: true });
+  }
+  
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (!node || node.nodeType !== Node.ELEMENT_NODE) continue;
+        const root = /** @type {Element} */ (node);
+        
+        // Try the node itself
+        if (looksLikeBranchMenuItem(root)) attachHandler(root);
+        
+        // And any descendants (menu items are often nested)
+        const candidates = root.querySelectorAll?.('[role="menuitem"], [role="menuitem"] *, button, a, div');
+        if (!candidates) continue;
+        for (const el of candidates) {
+          if (looksLikeBranchMenuItem(el)) attachHandler(el);
+        }
+      }
+    }
+  });
+  
+  try {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } catch (e) {
+    // ignore
+  }
+}
+
+function installBranchInNewChatClickCapture() {
+  const BRANCH_TEXT_PATTERNS = [/^branch in new chat$/i];
+  
+  function isBranchEl(el) {
+    if (!el) return false;
+    const ariaLabel = (el.getAttribute?.('aria-label') || '').trim();
+    if (ariaLabel && BRANCH_TEXT_PATTERNS.some((re) => re.test(ariaLabel))) return true;
+    const text = (el.textContent || '').trim();
+    return !!text && BRANCH_TEXT_PATTERNS.some((re) => re.test(text));
+  }
+  
+  document.addEventListener('click', (e) => {
+    const target = /** @type {Element|null} */ (e.target && e.target.nodeType === Node.ELEMENT_NODE ? e.target : null);
+    if (!target) return;
+    
+    // Radix menu item is typically the closest [role="menuitem"] wrapper.
+    const menuItem = target.closest?.('[role="menuitem"]') || target;
+    if (!menuItem) return;
+    if (!isBranchEl(menuItem)) return;
+    
+    const fromConversationId = getConversationId();
+    if (!fromConversationId) return;
+    state.pendingExplicitBranch = {
+      fromConversationId,
+      at: Date.now(),
+      fromMessageHashes: getConversationMessageHashes(10)
+    };
+  }, { capture: true });
+}
+
+function copySnippetsToConversation({ fromConversationId, toConversationId }) {
+  if (!fromConversationId || !toConversationId || fromConversationId === toConversationId) {
+    return 0;
+  }
+  const fromSnippets = state.items.filter(s => s.conversationId === fromConversationId);
+  const toSnippets = state.items.filter(s => s.conversationId === toConversationId);
+  if (fromSnippets.length === 0 || toSnippets.length > 0) {
+    return 0;
+  }
+  const copied = fromSnippets.map((s) => ({
+    ...s,
+    id: generateSnippetId(),
+    conversationId: toConversationId,
+    transferredFromConversationId: fromConversationId,
+    anchor: s.anchor ? { ...s.anchor } : s.anchor
+  }));
+  state.items = [...state.items, ...copied];
+  persistState();
+  updateUI();
+  return copied.length;
+}
+
+function findBranchedFromConversationId() {
+  try {
+    const toConvId = getConversationId();
+
+    // Single, structure-only hook (locale-safe, no global scanning):
+    // <div class="mx-auto mt-8 flex w-full items-center justify-center"> ... <p class="... text-xs ..."> <a target="_self" href=".../c/...">
+    const a = document.querySelector(
+      'div.mx-auto.mt-8.flex.w-full.items-center.justify-center p.text-xs a[target="_self"][href*="/c/"]'
+    );
+    if (!a) return null;
+
+    const href = a.getAttribute('href') || '';
+    if (!href) return null;
+    const abs = new URL(href, window.location.origin).href;
+    const fromId = getConversationIdFromUrl(abs);
+    if (!fromId) return null;
+    if (toConvId && fromId === toConvId) return null;
+    return fromId;
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+function scheduleBranchedFromTransferCheck() {
+  const toConvId = getConversationId();
+  if (!toConvId) return;
+  
+  // Try a few times — the footer often appears after the first render.
+  let attempts = 0;
+  const maxAttempts = 12; // ~6s
+  const interval = setInterval(() => {
+    attempts++;
+    const currentTo = getConversationId();
+    if (!currentTo || currentTo !== toConvId) {
+      clearInterval(interval);
+      return;
+    }
+    
+    const fromId = findBranchedFromConversationId();
+    if (!fromId) {
+      if (attempts >= maxAttempts) clearInterval(interval);
+      return;
+    }
+    
+    const key = `${fromId}->${toConvId}`;
+    if (state.lastAutoTransferKey === key) {
+      clearInterval(interval);
+      return;
+    }
+    state.lastAutoTransferKey = key;
+    
+    const copiedCount = copySnippetsToConversation({ fromConversationId: fromId, toConversationId: toConvId });
+    if (copiedCount > 0) {
+      createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} from parent thread`);
+    }
+    clearInterval(interval);
+  }, 500);
+}
 
 async function init() {
   container = createContainer();
@@ -982,6 +1204,9 @@ async function init() {
   state.currentConversationId = getConversationId();
   renderUI();
   setupEventListeners();
+  // Prefer click-capture (no reliance on ephemeral IDs). Observer remains as a secondary path.
+  installBranchInNewChatClickCapture();
+  installBranchInNewChatObserver();
   
   // Watch for conversation changes
   watchConversationChanges();
@@ -998,13 +1223,26 @@ async function init() {
  */
 function getCurrentConversationSnippets() {
   const currentConvId = getConversationId();
+  const url = window.location.href;
+  
+  // Check if we're on the main page (not in a conversation)
+  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  
   let snippets = [];
   
-  if (!currentConvId) {
-    // If no conversation ID, show all snippets (e.g., on main page)
-    snippets = state.items;
-  } else {
+  if (isMainPage) {
+    // On main page: show all snippets, unless we are in the middle of a branch transition
+    // (ChatGPT sometimes navigates through an intermediate URL before the new /c/{id} appears).
+    const pendingBranch =
+      !!state.pendingTransferFromConversationId ||
+      (!!state.pendingExplicitBranch && (Date.now() - state.pendingExplicitBranch.at) < 15_000);
+    snippets = pendingBranch ? [] : state.items;
+  } else if (currentConvId) {
+    // In a conversation with ID: show only snippets from this conversation
     snippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+  } else {
+    // In a conversation view but no ID yet (e.g., new thread): show nothing
+    snippets = [];
   }
   
   // Apply search filter if query exists
@@ -1023,18 +1261,174 @@ function getCurrentConversationSnippets() {
  */
 function watchConversationChanges() {
   let lastConversationId = getConversationId();
+  let lastUrl = window.location.href;
+  
+  function handleConversationTransition(previousConvId, currentConvId) {
+    // Allow multi-step transitions (oldId -> null -> newId) by using pending state.
+    const fromConvId = state.pendingTransferFromConversationId || previousConvId;
+    if (!fromConvId || fromConvId === currentConvId) return;
+    
+    // If we're in a conversation view but the ID isn't available yet, defer the offer.
+    const url = window.location.href;
+    const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+    if (!isMainPage && !currentConvId) {
+      state.pendingTransferFromConversationId = fromConvId;
+      // `state.pendingTransferFromMessageHashes` will be set by the caller.
+      return;
+    }
+    
+    const toConvId = currentConvId;
+    const fromHashes = state.pendingTransferFromMessageHashes || [];
+    state.pendingTransferFromConversationId = null;
+    state.pendingTransferFromMessageHashes = null;
+    
+    if (!fromConvId || !toConvId || fromConvId === toConvId) return;
+    
+    const promptKey = `${fromConvId}->${toConvId}`;
+    if (state.lastTransferPromptKey === promptKey) return;
+    state.lastTransferPromptKey = promptKey;
+    
+    const fromSnippets = state.items.filter(s => s.conversationId === fromConvId);
+    const toSnippets = state.items.filter(s => s.conversationId === toConvId);
+    
+    // Only offer when the destination conversation has no snippets yet.
+    if (fromSnippets.length === 0 || toSnippets.length > 0) return;
+    
+    // If the user explicitly clicked "Branch in new chat", skip heuristics for the next navigation.
+    const explicit = state.pendingExplicitBranch;
+    const now = Date.now();
+    const isExplicitBranch =
+      !!explicit &&
+      explicit.fromConversationId === fromConvId &&
+      (now - explicit.at) < 15_000;
+    if (isExplicitBranch) {
+      state.pendingExplicitBranch = null;
+      // Avoid `confirm()` here: it can be blocked because this runs on navigation timers, not a direct user gesture.
+      const copiedCount = copySnippetsToConversation({ fromConversationId: fromConvId, toConversationId: toConvId });
+      if (copiedCount > 0) {
+        createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} into this thread`);
+      }
+      return;
+    }
+
+    // Branch-only: wait for the new conversation DOM to load, then compare message overlap.
+    setTimeout(() => {
+      const currentHashes = getConversationMessageHashes(10);
+      if (!isLikelyBranch(fromHashes, currentHashes)) {
+        return;
+      }
+      // Heuristic branch detection is best-effort; don't auto-copy without an explicit branch click.
+      // (We can add an in-extension prompt here later if desired.)
+    }, 700);
+  }
   
   // Check periodically for conversation changes
   setInterval(() => {
+    const currentUrl = window.location.href;
     const currentConvId = getConversationId();
-    if (currentConvId !== lastConversationId) {
+    
+    // Check if URL changed or conversation ID changed
+    if (currentUrl !== lastUrl || currentConvId !== lastConversationId) {
+      const previousConvId = lastConversationId;
+      const previousHashes = getConversationMessageHashes(10);
+      lastUrl = currentUrl;
       lastConversationId = currentConvId;
       state.currentConversationId = currentConvId;
-      // Clear selections when switching conversations
+      // Clear selections and search when switching conversations
       state.selectedIds.clear();
+      state.searchQuery = '';
       updateUI();
+      
+      // Preserve the "from conversation" across intermediate URLs where the new conversationId isn't available yet.
+      if (previousConvId && !currentConvId) {
+        state.pendingTransferFromConversationId = previousConvId;
+      }
+      state.pendingTransferFromMessageHashes = previousHashes;
+      handleConversationTransition(previousConvId, currentConvId);
+      
+      // Most reliable: if the new thread shows "Branched from <link>", use that link as the source of truth.
+      if (currentConvId) {
+        scheduleBranchedFromTransferCheck();
+      }
     }
-  }, 1000);
+  }, 500);
+  
+  // Also listen to popstate for back/forward navigation
+  window.addEventListener('popstate', () => {
+    const currentConvId = getConversationId();
+    if (currentConvId !== lastConversationId) {
+      const previousConvId = lastConversationId;
+      const previousHashes = getConversationMessageHashes(10);
+      lastConversationId = currentConvId;
+      state.currentConversationId = currentConvId;
+      state.selectedIds.clear();
+      state.searchQuery = '';
+      updateUI();
+      
+      if (previousConvId && !currentConvId) {
+        state.pendingTransferFromConversationId = previousConvId;
+      }
+      state.pendingTransferFromMessageHashes = previousHashes;
+      handleConversationTransition(previousConvId, currentConvId);
+      if (currentConvId) {
+        scheduleBranchedFromTransferCheck();
+      }
+    }
+  });
+  
+  // Listen to pushstate/replacestate (ChatGPT uses these for navigation)
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  
+  history.pushState = function(...args) {
+    originalPushState.apply(history, args);
+    setTimeout(() => {
+      const currentConvId = getConversationId();
+      if (currentConvId !== lastConversationId) {
+        const previousConvId = lastConversationId;
+        const previousHashes = getConversationMessageHashes(10);
+        lastConversationId = currentConvId;
+        state.currentConversationId = currentConvId;
+        state.selectedIds.clear();
+        state.searchQuery = '';
+        updateUI();
+        
+        if (previousConvId && !currentConvId) {
+          state.pendingTransferFromConversationId = previousConvId;
+        }
+        state.pendingTransferFromMessageHashes = previousHashes;
+        handleConversationTransition(previousConvId, currentConvId);
+        if (currentConvId) {
+          scheduleBranchedFromTransferCheck();
+        }
+      }
+    }, 100);
+  };
+  
+  history.replaceState = function(...args) {
+    originalReplaceState.apply(history, args);
+    setTimeout(() => {
+      const currentConvId = getConversationId();
+      if (currentConvId !== lastConversationId) {
+        const previousConvId = lastConversationId;
+        const previousHashes = getConversationMessageHashes(10);
+        lastConversationId = currentConvId;
+        state.currentConversationId = currentConvId;
+        state.selectedIds.clear();
+        state.searchQuery = '';
+        updateUI();
+        
+        if (previousConvId && !currentConvId) {
+          state.pendingTransferFromConversationId = previousConvId;
+        }
+        state.pendingTransferFromMessageHashes = previousHashes;
+        handleConversationTransition(previousConvId, currentConvId);
+        if (currentConvId) {
+          scheduleBranchedFromTransferCheck();
+        }
+      }
+    }, 100);
+  };
 }
 
 async function loadState() {
@@ -1057,13 +1451,22 @@ async function persistState() {
 }
 
 function renderUI() {
-  // Get snippets without search filter for count (show total)
+  // Get snippets without search filter for count (show total for current conversation)
   const currentConvId = getConversationId();
+  const url = window.location.href;
+  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  
   let totalSnippets = [];
-  if (!currentConvId) {
-    totalSnippets = state.items;
-  } else {
+  if (isMainPage) {
+    const pendingBranch =
+      !!state.pendingTransferFromConversationId ||
+      (!!state.pendingExplicitBranch && (Date.now() - state.pendingExplicitBranch.at) < 15_000);
+    totalSnippets = pendingBranch ? [] : state.items;
+  } else if (currentConvId) {
     totalSnippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+  } else {
+    // In conversation view but no ID yet: show 0
+    totalSnippets = [];
   }
   
   // Get filtered snippets for display
@@ -1097,13 +1500,22 @@ function renderUI() {
 }
 
 function updateUI() {
-  // Get total snippets for count (not filtered)
+  // Get total snippets for count (not filtered, but filtered by conversation)
   const currentConvId = getConversationId();
+  const url = window.location.href;
+  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  
   let totalSnippets = [];
-  if (!currentConvId) {
-    totalSnippets = state.items;
-  } else {
+  if (isMainPage) {
+    const pendingBranch =
+      !!state.pendingTransferFromConversationId ||
+      (!!state.pendingExplicitBranch && (Date.now() - state.pendingExplicitBranch.at) < 15_000);
+    totalSnippets = pendingBranch ? [] : state.items;
+  } else if (currentConvId) {
     totalSnippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+  } else {
+    // In conversation view but no ID yet: show 0
+    totalSnippets = [];
   }
   
   // Get filtered snippets for display
