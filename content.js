@@ -357,9 +357,17 @@ function navigateToSource(snippet) {
     const currentConversationId = getConversationId();
     if (anchor.conversationId && currentConversationId && currentConversationId !== anchor.conversationId) {
       const conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
-      if (confirm('This snippet is from a different conversation. Open that conversation?')) {
-        window.open(conversationUrl, '_blank');
-      }
+      showConfirmModal({
+        title: 'Open parent conversation?',
+        message: 'This snippet’s source is in a different conversation. Open the original conversation in a new tab?',
+        confirmText: 'Open',
+        cancelText: 'Cancel'
+      }).then((ok) => {
+        if (ok) window.open(conversationUrl, '_blank');
+      });
+      
+      // We return false because we didn't navigate in-page.
+      // The modal can still open the parent conversation if the user confirms.
       return false;
     }
     createToast('Source not found');
@@ -617,7 +625,9 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   text.textContent = snippet.text;
   text.setAttribute('title', snippet.text);
   text.style.cursor = 'pointer';
-  text.addEventListener('click', () => onSnippetClick(snippet));
+  text.addEventListener('click', async () => {
+    await onSnippetClick(snippet);
+  });
   
   const meta = document.createElement('div');
   meta.className = 'ce-snippet-meta';
@@ -642,9 +652,9 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small';
   removeBtn.setAttribute('aria-label', 'Remove snippet');
   removeBtn.innerHTML = '×';
-  removeBtn.addEventListener('click', (e) => {
+  removeBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    onRemove(snippet.id);
+    await onRemove(snippet.id);
   });
   
   actions.appendChild(copyBtn);
@@ -740,7 +750,9 @@ function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, sn
   clearBtn.className = 'ce-btn ce-btn-secondary';
   clearBtn.textContent = 'Clear';
   clearBtn.setAttribute('aria-label', 'Clear all snippets');
-  clearBtn.addEventListener('click', onClear);
+  clearBtn.addEventListener('click', async () => {
+    await onClear();
+  });
   clearBtn.disabled = snippetCount === 0;
   
   const closeBtn = document.createElement('button');
@@ -811,6 +823,119 @@ function createToast(message, duration = 3000) {
     }, 300);
   }, duration);
   return toast;
+}
+
+// ============================================================================
+// Modal dialogs (replace browser confirm/alert)
+// ============================================================================
+
+let activeModalOverlay = null;
+let activeModalResolve = null;
+let activeModalCleanup = null;
+
+function closeActiveModal(result) {
+  if (typeof activeModalCleanup === 'function') {
+    try { activeModalCleanup(); } catch (e) { /* ignore */ }
+  }
+  activeModalCleanup = null;
+  if (typeof activeModalResolve === 'function') {
+    try {
+      activeModalResolve(!!result);
+    } catch (e) {
+      // ignore
+    }
+  }
+  activeModalResolve = null;
+  if (activeModalOverlay && activeModalOverlay.parentNode) {
+    activeModalOverlay.parentNode.removeChild(activeModalOverlay);
+  }
+  activeModalOverlay = null;
+}
+
+function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Cancel', danger = false } = {}) {
+  return new Promise((resolve) => {
+    // If a modal is already open, close it (resolve false) before showing the next.
+    if (activeModalOverlay) {
+      closeActiveModal(false);
+    }
+    activeModalResolve = resolve;
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'ce-modal-overlay';
+    overlay.setAttribute('role', 'presentation');
+    
+    const modal = document.createElement('div');
+    modal.className = 'ce-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', title || 'Confirm');
+    
+    const body = document.createElement('div');
+    body.className = 'ce-modal-body';
+    
+    const h = document.createElement('h3');
+    h.className = 'ce-modal-title';
+    h.textContent = title || 'Confirm';
+    
+    const p = document.createElement('p');
+    p.className = 'ce-modal-message';
+    p.textContent = message || '';
+    
+    body.appendChild(h);
+    body.appendChild(p);
+    
+    const actions = document.createElement('div');
+    actions.className = 'ce-modal-actions';
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'ce-btn';
+    cancelBtn.textContent = cancelText;
+    cancelBtn.addEventListener('click', () => closeActiveModal(false));
+    
+    const okBtn = document.createElement('button');
+    okBtn.className = danger ? 'ce-btn ce-btn-danger' : 'ce-btn ce-btn-secondary';
+    okBtn.textContent = confirmText;
+    okBtn.addEventListener('click', () => closeActiveModal(true));
+    
+    actions.appendChild(cancelBtn);
+    actions.appendChild(okBtn);
+    
+    modal.appendChild(body);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeActiveModal(false);
+      }
+      if (e.key === 'Enter') {
+        // Enter confirms unless focus is on cancel
+        if (document.activeElement === cancelBtn) return;
+        e.preventDefault();
+        closeActiveModal(true);
+      }
+    };
+    
+    overlay.addEventListener('mousedown', (e) => {
+      // Click outside closes (cancel)
+      if (e.target === overlay) closeActiveModal(false);
+    });
+    
+    document.addEventListener('keydown', onKeyDown, { capture: true });
+    activeModalCleanup = () => {
+      document.removeEventListener('keydown', onKeyDown, { capture: true });
+    };
+    
+    document.body.appendChild(overlay);
+    activeModalOverlay = overlay;
+    
+    requestAnimationFrame(() => {
+      modal.classList.add('ce-modal-show');
+      // Default focus: cancel for safety (especially for destructive actions)
+      cancelBtn.focus();
+    });
+  });
 }
 
 let selectionToolbar = null;
@@ -1600,7 +1725,15 @@ function addSnippet(snippet) {
   persistState();
 }
 
-function handleRemove(id) {
+async function handleRemove(id) {
+  const ok = await showConfirmModal({
+    title: 'Remove snippet?',
+    message: 'This will remove it from your collected list. You can’t undo this.',
+    confirmText: 'Remove',
+    cancelText: 'Cancel',
+    danger: true
+  });
+  if (!ok) return;
   state.items = state.items.filter(item => item.id !== id);
   state.selectedIds.delete(id); // Remove from selection if it was selected
   updateUI();
@@ -1608,25 +1741,32 @@ function handleRemove(id) {
   createToast('Snippet removed');
 }
 
-function handleClear() {
+async function handleClear() {
   const currentSnippets = getCurrentConversationSnippets();
   if (currentSnippets.length === 0) return;
   
   const currentConvId = getConversationId();
-  if (confirm(`Clear all ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation?`)) {
-    if (currentConvId) {
-      // Remove only snippets from current conversation
-      state.items = state.items.filter(snippet => snippet.conversationId !== currentConvId);
-    } else {
-      // No conversation ID, clear all
-      state.items = [];
-    }
-    // Remove cleared snippets from selection
-    currentSnippets.forEach(snippet => state.selectedIds.delete(snippet.id));
-    updateUI();
-    persistState();
-    createToast(`Cleared ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
+  const ok = await showConfirmModal({
+    title: 'Clear collected snippets?',
+    message: `Clear all ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation?`,
+    confirmText: 'Clear',
+    cancelText: 'Cancel',
+    danger: true
+  });
+  if (!ok) return;
+  
+  if (currentConvId) {
+    // Remove only snippets from current conversation
+    state.items = state.items.filter(snippet => snippet.conversationId !== currentConvId);
+  } else {
+    // No conversation ID, clear all
+    state.items = [];
   }
+  // Remove cleared snippets from selection
+  currentSnippets.forEach(snippet => state.selectedIds.delete(snippet.id));
+  updateUI();
+  persistState();
+  createToast(`Cleared ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
 }
 
 async function handleCopy() {
