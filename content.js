@@ -276,6 +276,80 @@ function buildSnippetFromSelection() {
   };
 }
 
+function buildSnippetFromRangeSnapshot({ selectionText, markdownText, range }) {
+  if (!range) return null;
+  
+  const rawSelectionText = (selectionText || '').trim();
+  if (!rawSelectionText) return null;
+  
+  const cleanedMarkdown = cleanupMarkdown(markdownText || rawSelectionText);
+  
+  let finalText = cleanedMarkdown;
+  let truncated = false;
+  if (finalText.length > MAX_SELECTION_SIZE) {
+    finalText = finalText.substring(0, MAX_SELECTION_SIZE);
+    truncated = true;
+  }
+  
+  const startNode = range.startContainer;
+  const endNode = range.endContainer;
+  
+  // Find message blocks for both start and end
+  const startMessageBlock = findMessageBlock(startNode);
+  const endMessageBlock = findMessageBlock(endNode);
+  
+  // Check if selection spans multiple messages
+  const spansMultipleMessages = startMessageBlock && endMessageBlock && 
+                                startMessageBlock !== endMessageBlock;
+  
+  // Use the start message block for anchor (or first one found)
+  const messageBlock = startMessageBlock || endMessageBlock;
+  
+  const conversationId = getConversationId();
+  
+  if (!messageBlock) {
+    // No message block found - still create snippet but without anchor
+    return {
+      id: generateSnippetId(),
+      text: finalText,
+      conversationId,
+      anchor: null,
+      timestamp: Date.now(),
+      truncated
+    };
+  }
+  
+  const messageId = getMessageId(messageBlock);
+  const messageText = getMessageText(messageBlock);
+  
+  // For cross-message selections, offsets won't be accurate, so we'll use prefix matching
+  let offsets = null;
+  if (!spansMultipleMessages) {
+    offsets = findSelectionOffsets(messageText, rawSelectionText);
+  }
+  
+  const selectionStart = offsets?.start ?? 0;
+  const selectionEnd = offsets?.end ?? rawSelectionText.length;
+  
+  const anchor = buildAnchor({
+    conversationId,
+    messageId: spansMultipleMessages ? null : messageId,
+    messageText: spansMultipleMessages ? '' : messageText,
+    selectionText: rawSelectionText,
+    selectionStart,
+    selectionEnd
+  });
+  
+  return {
+    id: generateSnippetId(),
+    text: finalText,
+    conversationId,
+    anchor,
+    timestamp: Date.now(),
+    truncated
+  };
+}
+
 // ============================================================================
 // Navigation
 // ============================================================================
@@ -952,6 +1026,13 @@ function createSelectionToolbar(selection, range) {
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', 'Selection actions');
   
+  // Snapshot the selection at the time the toolbar is created.
+  // Clicking the toolbar can collapse selection on some ChatGPT surfaces (/g/ threads),
+  // so we must not rely on window.getSelection() at click time.
+  const savedRange = range?.cloneRange ? range.cloneRange() : null;
+  const savedSelectionText = (selection?.toString ? selection.toString() : '').trim();
+  const savedMarkdown = cleanupMarkdown(selectionToMarkdown(selection));
+  
   const saveBtn = document.createElement('button');
   saveBtn.className = 'ce-toolbar-btn';
   saveBtn.innerHTML = '<span class="ce-toolbar-icon">💾</span><span class="ce-toolbar-label">Collect</span>';
@@ -965,10 +1046,19 @@ function createSelectionToolbar(selection, range) {
   copyBtn.title = 'Copy as markdown';
   
   // Event handlers
+  // Prevent selection collapse when interacting with toolbar/buttons.
+  toolbar.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+  }, { capture: true });
+  
   saveBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
-    const snippet = buildSnippetFromSelection();
+    const snippet = buildSnippetFromRangeSnapshot({
+      selectionText: savedSelectionText,
+      markdownText: savedMarkdown,
+      range: savedRange
+    });
     if (snippet) {
       addSnippet(snippet);
       if (snippet.truncated) {
@@ -976,6 +1066,8 @@ function createSelectionToolbar(selection, range) {
       } else {
         createToast('Snippet saved');
       }
+    } else {
+      createToast('Nothing selected');
     }
     hideSelectionToolbar();
     window.getSelection().removeAllRanges();
@@ -985,8 +1077,7 @@ function createSelectionToolbar(selection, range) {
     e.stopPropagation();
     e.preventDefault();
     try {
-      const markdown = selectionToMarkdown(selection);
-      await navigator.clipboard.writeText(markdown);
+      await navigator.clipboard.writeText(savedMarkdown || savedSelectionText);
       createToast('Copied as markdown');
     } catch (error) {
       console.error('Failed to copy:', error);
