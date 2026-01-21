@@ -409,11 +409,15 @@ function applyTransientHighlight(element, startOffset, endOffset) {
   }
 }
 
-function navigateToSource(snippet) {
+function navigateToSource(snippet, options = {}) {
   if (!snippet || !snippet.anchor) {
     return false;
   }
   const { anchor } = snippet;
+  const {
+    suppressNotFoundToast = false,
+    allowCrossConversationOpen = true
+  } = options;
   
   let messageBlock = null;
   if (anchor.messageId) {
@@ -430,9 +434,22 @@ function navigateToSource(snippet) {
     // offer to open the original conversation (user gesture: snippet click).
     const currentConversationId = getConversationId();
     // On the main page (no currentConversationId), or in a different conversation,
-    // offer to open the original source conversation.
-    if (anchor.conversationId && (!currentConversationId || currentConversationId !== anchor.conversationId)) {
-      const conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
+    // offer to open the original source conversation (unless disabled by caller).
+    if (
+      allowCrossConversationOpen &&
+      anchor.conversationId &&
+      (!currentConversationId || currentConversationId !== anchor.conversationId)
+    ) {
+      let conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
+      try {
+        const url = new URL(conversationUrl);
+        if (snippet.id) {
+          url.searchParams.set('ce_snippet_id', snippet.id);
+        }
+        conversationUrl = url.toString();
+      } catch (e) {
+        // ignore URL construction issues; fall back to bare URL
+      }
       showConfirmModal({
         title: 'Open parent conversation?',
         message: 'This snippet’s source is in a different conversation. Open the original conversation in a new tab?',
@@ -446,7 +463,9 @@ function navigateToSource(snippet) {
       // The modal can still open the parent conversation if the user confirms.
       return false;
     }
-    createToast('Source not found');
+    if (!suppressNotFoundToast) {
+      createToast('Source not found');
+    }
     return false;
   }
   if (anchor.selectionOffsets) {
@@ -469,6 +488,52 @@ function navigateToSource(snippet) {
     }
   }
   return true;
+}
+
+function schedulePendingSnippetHighlight() {
+  let snippetId = null;
+  try {
+    const url = new URL(window.location.href);
+    snippetId = url.searchParams.get('ce_snippet_id');
+  } catch (e) {
+    // ignore
+  }
+  if (!snippetId) return;
+  
+  const targetConvId = getConversationId();
+  if (!targetConvId) return;
+  
+  const key = `${snippetId}@${targetConvId}`;
+  if (state.lastPendingHighlightKey === key) return;
+  state.lastPendingHighlightKey = key;
+  
+  let attempts = 0;
+  const maxAttempts = 20; // ~10s at 500ms intervals
+  const interval = setInterval(() => {
+    attempts++;
+    const currentConvId = getConversationId();
+    if (!currentConvId || currentConvId !== targetConvId) {
+      clearInterval(interval);
+      return;
+    }
+    
+    const snippet = state.items.find(s => s.id === snippetId);
+    if (!snippet || !snippet.anchor || snippet.anchor.conversationId !== currentConvId) {
+      clearInterval(interval);
+      return;
+    }
+    
+    const success = navigateToSource(snippet, {
+      suppressNotFoundToast: true,
+      allowCrossConversationOpen: false
+    });
+    if (success || attempts >= maxAttempts) {
+      clearInterval(interval);
+      if (!success) {
+        createToast('Source not found');
+      }
+    }
+  }, 500);
 }
 
 // ============================================================================
@@ -1207,7 +1272,8 @@ let state = {
   // Used to avoid heuristics when we *know* the next navigation is a branch.
   pendingExplicitBranch: null,
   lastAutoTransferKey: null,
-  lastTransferPromptKey: null
+  lastTransferPromptKey: null,
+  lastPendingHighlightKey: null
 };
 
 let container = null;
@@ -1428,10 +1494,18 @@ async function init() {
   
   // Watch for conversation changes
   watchConversationChanges();
+  // If this tab was opened for a specific snippet, schedule a highlight once the DOM is ready.
+  schedulePendingSnippetHighlight();
   
   const currentSnippets = getCurrentConversationSnippets();
   if (currentSnippets.length > 0) {
-    createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation`);
+    const url = window.location.href;
+    const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+    if (isMainPage) {
+      createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
+    } else if (state.currentConversationId) {
+      createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation`);
+    }
   }
 }
 
