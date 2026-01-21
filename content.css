@@ -513,6 +513,18 @@
   padding: 18px 20px 16px;
 }
 
+.ce-modal-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.ce-modal-title-row .ce-modal-title {
+  margin: 0;
+}
+
 .ce-modal-title {
   margin: 0 0 8px;
   font-size: 16px;
@@ -526,6 +538,47 @@
   line-height: 1.5;
   letter-spacing: -0.01em;
   color: rgba(26, 26, 26, 0.85);
+}
+
+.ce-modal-section {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ce-modal-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(26, 26, 26, 0.6);
+}
+
+.ce-modal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.ce-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ce-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+
+.ce-file-name {
+  font-size: 12px;
+  color: #8a8a8a;
 }
 
 .ce-modal-actions {

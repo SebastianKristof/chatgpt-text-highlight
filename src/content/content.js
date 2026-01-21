@@ -6,7 +6,8 @@
 import { loadSnippets, saveSnippets } from './storage.js';
 import { buildSnippetFromSelection } from './selection.js';
 import { navigateToSource } from './navigation.js';
-import { createContainer, createFAB, createPanel, createToast, updateFABCount, updatePanel } from './ui.js';
+import { hashText } from '../shared/hash.js';
+import { createContainer, createFAB, createPanel, createImportExportModal, createToast, updateFABCount, updatePanel } from './ui.js';
 
 // State
 let state = {
@@ -18,6 +19,104 @@ let state = {
 let container = null;
 let fab = null;
 let panel = null;
+let importExportModal = null;
+let modalOpen = false;
+
+const SCHEMA_VERSION = 1;
+
+function generateSnippetId() {
+  return `snippet_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+function snippetKey(snippet) {
+  const anchor = snippet?.anchor || {};
+  const offsets = anchor.selectionOffsets || {};
+  return [
+    hashText(snippet?.text || ''),
+    snippet?.conversationId || '',
+    anchor.textHash || '',
+    offsets.start ?? '',
+    offsets.end ?? ''
+  ].join('|');
+}
+
+function normalizeImportedSnippet(raw) {
+  if (!raw || typeof raw.text !== 'string') return null;
+  const text = raw.text.trim();
+  if (!text) return null;
+  return {
+    id: typeof raw.id === 'string' ? raw.id : generateSnippetId(),
+    text,
+    conversationId: typeof raw.conversationId === 'string' ? raw.conversationId : null,
+    anchor: raw.anchor && typeof raw.anchor === 'object' ? raw.anchor : null,
+    timestamp: Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now(),
+    truncated: Boolean(raw.truncated)
+  };
+}
+
+function normalizeImportedSnippets(items) {
+  return items
+    .map(normalizeImportedSnippet)
+    .filter(Boolean);
+}
+
+function dedupeSnippets(items) {
+  const seen = new Set();
+  const deduped = [];
+  let skipped = 0;
+  items.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (seen.has(key)) {
+      skipped += 1;
+      return;
+    }
+    seen.add(key);
+    deduped.push(snippet);
+  });
+  return { items: deduped, skipped };
+}
+
+function mergeSnippets(existing, incoming) {
+  const seen = new Set(existing.map(snippetKey));
+  const merged = [...existing];
+  let added = 0;
+  let skipped = 0;
+  incoming.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (seen.has(key)) {
+      skipped += 1;
+      return;
+    }
+    seen.add(key);
+    merged.push(snippet);
+    added += 1;
+  });
+  return { items: merged, added, skipped };
+}
+
+function buildMarkdownFromSnippets(snippets) {
+  return snippets.map((snippet) => `- ${snippet.text}`).join('\n');
+}
+
+function downloadTextFile(filename, text, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 0);
+}
+
+function exportFilename(extension) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `chatgpt-snippets-${stamp}.${extension}`;
+}
 
 /**
  * Initializes the extension.
@@ -87,7 +186,8 @@ function renderUI() {
     onClear: handleClear,
     onClose: handleClose,
     onRemove: handleRemove,
-    onSnippetClick: handleSnippetClick
+    onSnippetClick: handleSnippetClick,
+    onManage: handleOpenImportExport
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   container.appendChild(panel);
@@ -115,6 +215,10 @@ function setupEventListeners() {
   
   // Close panel on escape key
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modalOpen) {
+      handleCloseImportExport();
+      return;
+    }
     if (e.key === 'Escape' && state.panelOpen) {
       handleClose();
     }
@@ -122,6 +226,7 @@ function setupEventListeners() {
   
   // Close panel when clicking outside
   document.addEventListener('click', (e) => {
+    if (modalOpen) return;
     if (state.panelOpen && panel && !panel.contains(e.target) && !fab.contains(e.target)) {
       handleClose();
     }
@@ -200,9 +305,7 @@ async function handleCopy() {
     return;
   }
   
-  const markdown = state.items
-    .map(snippet => `- ${snippet.text}`)
-    .join('\n');
+  const markdown = buildMarkdownFromSnippets(state.items);
   
   try {
     await navigator.clipboard.writeText(markdown);
@@ -210,6 +313,86 @@ async function handleCopy() {
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
+  }
+}
+
+function handleOpenImportExport() {
+  if (modalOpen) return;
+  importExportModal = createImportExportModal({
+    snippetCount: state.items.length,
+    onClose: handleCloseImportExport,
+    onExportJson: handleExportJson,
+    onExportMarkdown: handleExportMarkdown,
+    onImport: handleImport
+  });
+  document.body.appendChild(importExportModal);
+  modalOpen = true;
+}
+
+function handleCloseImportExport() {
+  if (!importExportModal) return;
+  importExportModal.remove();
+  importExportModal = null;
+  modalOpen = false;
+}
+
+function handleExportJson() {
+  if (state.items.length === 0) {
+    createToast('No snippets to export');
+    return;
+  }
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    items: state.items
+  };
+  downloadTextFile(exportFilename('json'), JSON.stringify(payload, null, 2), 'application/json');
+  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+}
+
+function handleExportMarkdown() {
+  if (state.items.length === 0) {
+    createToast('No snippets to export');
+    return;
+  }
+  const markdown = buildMarkdownFromSnippets(state.items);
+  downloadTextFile(exportFilename('md'), markdown, 'text/markdown');
+  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+}
+
+async function handleImport(file, mode) {
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const items = Array.isArray(parsed) ? parsed : parsed.items;
+    if (!Array.isArray(items)) {
+      createToast('Invalid JSON format');
+      return;
+    }
+    const normalized = normalizeImportedSnippets(items);
+    if (normalized.length === 0) {
+      createToast('No valid snippets found');
+      return;
+    }
+    if (mode === 'replace') {
+      const { items: deduped, skipped } = dedupeSnippets(normalized);
+      state.items = deduped;
+      updateUI();
+      await persistState();
+      handleCloseImportExport();
+      createToast(`Imported ${deduped.length} snippet${deduped.length !== 1 ? 's' : ''}${skipped ? ` (${skipped} duplicates skipped)` : ''}`);
+      return;
+    }
+    const { items: merged, added, skipped } = mergeSnippets(state.items, normalized);
+    state.items = merged;
+    updateUI();
+    await persistState();
+    handleCloseImportExport();
+    const suffix = skipped ? ` (${skipped} duplicates skipped)` : '';
+    createToast(`Imported ${added} new snippet${added !== 1 ? 's' : ''}${suffix}`);
+  } catch (error) {
+    console.error('Failed to import snippets:', error);
+    createToast('Failed to import snippets');
   }
 }
 

@@ -826,7 +826,7 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
   return list;
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, snippetCount, selectedCount, allSelected, searchQuery }) {
+function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, onSearch, snippetCount, selectedCount, allSelected, searchQuery }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   const title = document.createElement('h2');
@@ -876,7 +876,7 @@ function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, sn
   selectAllBtn.disabled = snippetCount === 0;
   
   const copyBtn = document.createElement('button');
-  copyBtn.className = 'ce-btn ce-btn-secondary';
+  copyBtn.className = 'ce-btn ce-btn-secondary ce-btn-copy';
   if (selectedCount > 0) {
     copyBtn.textContent = `Copy (${selectedCount})`;
     copyBtn.setAttribute('aria-label', `Copy ${selectedCount} selected snippets`);
@@ -888,7 +888,7 @@ function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, sn
   copyBtn.disabled = snippetCount === 0;
   
   const clearBtn = document.createElement('button');
-  clearBtn.className = 'ce-btn ce-btn-secondary';
+  clearBtn.className = 'ce-btn ce-btn-secondary ce-btn-clear';
   clearBtn.textContent = 'Clear';
   clearBtn.setAttribute('aria-label', 'Clear all snippets');
   clearBtn.addEventListener('click', async () => {
@@ -896,6 +896,12 @@ function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, sn
   });
   clearBtn.disabled = snippetCount === 0;
   
+  const manageBtn = document.createElement('button');
+  manageBtn.className = 'ce-btn ce-btn-secondary ce-btn-manage';
+  manageBtn.textContent = 'Import/Export';
+  manageBtn.setAttribute('aria-label', 'Import or export snippets');
+  manageBtn.addEventListener('click', onManage);
+
   const closeBtn = document.createElement('button');
   closeBtn.className = 'ce-btn ce-btn-icon';
   closeBtn.setAttribute('aria-label', 'Close panel');
@@ -905,6 +911,7 @@ function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, sn
   actions.appendChild(selectAllBtn);
   actions.appendChild(copyBtn);
   actions.appendChild(clearBtn);
+  actions.appendChild(manageBtn);
   actions.appendChild(closeBtn);
   header.appendChild(title);
   header.appendChild(searchContainer);
@@ -919,7 +926,7 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery }) {
+function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, selectedIds, searchQuery }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
@@ -929,6 +936,7 @@ function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetCl
     onCopy, 
     onClear, 
     onClose, 
+    onManage,
     onSelectAll,
     onSearch,
     snippetCount: snippets.length, 
@@ -1077,6 +1085,158 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
       cancelBtn.focus();
     });
   });
+}
+
+function createImportExportModal({ snippetCount, onClose, onExportJson, onExportMarkdown, onImport }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'ce-modal-overlay ce-extension';
+  overlay.setAttribute('role', 'presentation');
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      onClose();
+    }
+  });
+
+  const modal = document.createElement('div');
+  modal.className = 'ce-modal ce-modal-show';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Import and export');
+
+  const body = document.createElement('div');
+  body.className = 'ce-modal-body';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-modal-title-row';
+
+  const title = document.createElement('h3');
+  title.className = 'ce-modal-title';
+  title.textContent = 'Import / Export';
+
+  const closeIcon = document.createElement('button');
+  closeIcon.className = 'ce-btn ce-btn-icon';
+  closeIcon.setAttribute('aria-label', 'Close import/export');
+  closeIcon.innerHTML = '×';
+  closeIcon.addEventListener('click', onClose);
+
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeIcon);
+
+  const message = document.createElement('p');
+  message.className = 'ce-modal-message';
+  message.textContent = 'Export your snippets as JSON or Markdown, or import a JSON backup.';
+
+  const exportSection = document.createElement('div');
+  exportSection.className = 'ce-modal-section';
+
+  const exportLabel = document.createElement('div');
+  exportLabel.className = 'ce-modal-label';
+  exportLabel.textContent = 'Export';
+
+  const exportRow = document.createElement('div');
+  exportRow.className = 'ce-modal-row';
+
+  const exportJsonBtn = document.createElement('button');
+  exportJsonBtn.className = 'ce-btn ce-btn-secondary';
+  exportJsonBtn.textContent = 'Export JSON';
+  exportJsonBtn.disabled = snippetCount === 0;
+  exportJsonBtn.addEventListener('click', onExportJson);
+
+  const exportMdBtn = document.createElement('button');
+  exportMdBtn.className = 'ce-btn ce-btn-secondary';
+  exportMdBtn.textContent = 'Export Markdown';
+  exportMdBtn.disabled = snippetCount === 0;
+  exportMdBtn.addEventListener('click', onExportMarkdown);
+
+  exportRow.appendChild(exportJsonBtn);
+  exportRow.appendChild(exportMdBtn);
+  exportSection.appendChild(exportLabel);
+  exportSection.appendChild(exportRow);
+
+  const importSection = document.createElement('div');
+  importSection.className = 'ce-modal-section';
+
+  const importLabel = document.createElement('div');
+  importLabel.className = 'ce-modal-label';
+  importLabel.textContent = 'Import (JSON)';
+
+  const radioGroup = document.createElement('div');
+  radioGroup.className = 'ce-radio-group';
+
+  const mergeLabel = document.createElement('label');
+  mergeLabel.className = 'ce-radio';
+  const mergeInput = document.createElement('input');
+  mergeInput.type = 'radio';
+  mergeInput.name = 'ce-import-mode';
+  mergeInput.checked = true;
+  mergeLabel.appendChild(mergeInput);
+  mergeLabel.append('Merge (skip duplicates)');
+
+  const replaceLabel = document.createElement('label');
+  replaceLabel.className = 'ce-radio';
+  const replaceInput = document.createElement('input');
+  replaceInput.type = 'radio';
+  replaceInput.name = 'ce-import-mode';
+  replaceLabel.appendChild(replaceInput);
+  replaceLabel.append('Replace existing');
+
+  radioGroup.appendChild(mergeLabel);
+  radioGroup.appendChild(replaceLabel);
+
+  const importRow = document.createElement('div');
+  importRow.className = 'ce-modal-row';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+
+  const chooseBtn = document.createElement('button');
+  chooseBtn.className = 'ce-btn ce-btn-secondary';
+  chooseBtn.textContent = 'Choose JSON';
+  chooseBtn.addEventListener('click', () => fileInput.click());
+
+  const fileName = document.createElement('div');
+  fileName.className = 'ce-file-name';
+  fileName.textContent = 'No file selected';
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    fileName.textContent = file.name;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onImport(file, mode);
+    fileInput.value = '';
+  });
+
+  importRow.appendChild(chooseBtn);
+  importRow.appendChild(fileName);
+
+  importSection.appendChild(importLabel);
+  importSection.appendChild(radioGroup);
+  importSection.appendChild(importRow);
+
+  const actions = document.createElement('div');
+  actions.className = 'ce-modal-actions';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ce-btn ce-btn-secondary';
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', onClose);
+
+  actions.appendChild(closeBtn);
+
+  body.appendChild(titleRow);
+  body.appendChild(message);
+  body.appendChild(exportSection);
+  body.appendChild(importSection);
+
+  modal.appendChild(body);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  overlay.appendChild(fileInput);
+
+  return overlay;
 }
 
 let selectionToolbar = null;
@@ -1228,8 +1388,8 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
   
   // Update header buttons
   const selectAllBtn = panel.querySelector('.ce-btn:not(.ce-btn-secondary):not(.ce-btn-icon)');
-  const copyBtn = panel.querySelector('.ce-btn-secondary');
-  const clearBtn = panel.querySelector('.ce-btn[aria-label="Clear all snippets"]');
+  const copyBtn = panel.querySelector('.ce-btn-copy');
+  const clearBtn = panel.querySelector('.ce-btn-clear');
   
   if (selectAllBtn) {
     const allSelected = selectedIds && selectedIds.size === snippets.length && snippets.length > 0;
@@ -1279,6 +1439,101 @@ let state = {
 let container = null;
 let fab = null;
 let panel = null;
+let importExportModal = null;
+let modalOpen = false;
+
+function snippetKey(snippet) {
+  const anchor = snippet?.anchor || {};
+  const offsets = anchor.selectionOffsets || {};
+  return [
+    hashText(snippet?.text || ''),
+    snippet?.conversationId || '',
+    anchor.textHash || '',
+    offsets.start ?? '',
+    offsets.end ?? ''
+  ].join('|');
+}
+
+function normalizeImportedSnippet(raw) {
+  if (!raw || typeof raw.text !== 'string') return null;
+  const text = raw.text.trim();
+  if (!text) return null;
+  return {
+    id: typeof raw.id === 'string' ? raw.id : generateSnippetId(),
+    text,
+    conversationId: typeof raw.conversationId === 'string' ? raw.conversationId : null,
+    anchor: raw.anchor && typeof raw.anchor === 'object' ? raw.anchor : null,
+    timestamp: Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now(),
+    truncated: Boolean(raw.truncated)
+  };
+}
+
+function normalizeImportedSnippets(items) {
+  return items
+    .map(normalizeImportedSnippet)
+    .filter(Boolean);
+}
+
+function dedupeSnippets(items) {
+  const seen = new Set();
+  const deduped = [];
+  let skipped = 0;
+  items.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (seen.has(key)) {
+      skipped += 1;
+      return;
+    }
+    seen.add(key);
+    deduped.push(snippet);
+  });
+  return { items: deduped, skipped };
+}
+
+function mergeSnippets(existing, incoming) {
+  const seen = new Set(existing.map(snippetKey));
+  const merged = [...existing];
+  let added = 0;
+  let skipped = 0;
+  incoming.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (seen.has(key)) {
+      skipped += 1;
+      return;
+    }
+    seen.add(key);
+    merged.push(snippet);
+    added += 1;
+  });
+  return { items: merged, added, skipped };
+}
+
+function buildMarkdownFromSnippets(snippets) {
+  const combined = snippets
+    .map((snippet) => cleanupMarkdown(snippet.text))
+    .join('\n\n');
+  return cleanupMarkdown(combined);
+}
+
+function downloadTextFile(filename, text, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 0);
+}
+
+function exportFilename(extension) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `chatgpt-snippets-${stamp}.${extension}`;
+}
 
 // ============================================================================
 // Branch detection helpers
@@ -1784,6 +2039,7 @@ function renderUI() {
     onToggleSelect: handleToggleSelect,
     onSelectAll: handleSelectAll,
     onSearch: handleSearch,
+    onManage: handleOpenImportExport,
     selectedIds: state.selectedIds,
     searchQuery: state.searchQuery
   });
@@ -1832,6 +2088,10 @@ function setupEventListeners() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (modalOpen) {
+        handleCloseImportExport();
+        return;
+      }
       if (state.panelOpen) {
         handleClose();
       }
@@ -1839,6 +2099,7 @@ function setupEventListeners() {
     }
   });
   document.addEventListener('click', (e) => {
+    if (modalOpen) return;
     if (state.panelOpen && panel && !panel.contains(e.target) && !fab.contains(e.target)) {
       handleClose();
     }
@@ -1981,6 +2242,88 @@ async function handleCopy() {
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
+  }
+}
+
+function handleOpenImportExport() {
+  if (modalOpen) return;
+  importExportModal = createImportExportModal({
+    snippetCount: state.items.length,
+    onClose: handleCloseImportExport,
+    onExportJson: handleExportJson,
+    onExportMarkdown: handleExportMarkdown,
+    onImport: handleImport
+  });
+  document.body.appendChild(importExportModal);
+  modalOpen = true;
+}
+
+function handleCloseImportExport() {
+  if (!importExportModal) return;
+  importExportModal.remove();
+  importExportModal = null;
+  modalOpen = false;
+}
+
+function handleExportJson() {
+  if (state.items.length === 0) {
+    createToast('No snippets to export');
+    return;
+  }
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    items: state.items
+  };
+  downloadTextFile(exportFilename('json'), JSON.stringify(payload, null, 2), 'application/json');
+  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+}
+
+function handleExportMarkdown() {
+  if (state.items.length === 0) {
+    createToast('No snippets to export');
+    return;
+  }
+  const markdown = buildMarkdownFromSnippets(state.items);
+  downloadTextFile(exportFilename('md'), markdown, 'text/markdown');
+  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+}
+
+async function handleImport(file, mode) {
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const items = Array.isArray(parsed) ? parsed : parsed.items;
+    if (!Array.isArray(items)) {
+      createToast('Invalid JSON format');
+      return;
+    }
+    const normalized = normalizeImportedSnippets(items);
+    if (normalized.length === 0) {
+      createToast('No valid snippets found');
+      return;
+    }
+    if (mode === 'replace') {
+      const { items: deduped, skipped } = dedupeSnippets(normalized);
+      state.items = deduped;
+      state.selectedIds.clear();
+      state.searchQuery = '';
+      updateUI();
+      await persistState();
+      handleCloseImportExport();
+      createToast(`Imported ${deduped.length} snippet${deduped.length !== 1 ? 's' : ''}${skipped ? ` (${skipped} duplicates skipped)` : ''}`);
+      return;
+    }
+    const { items: merged, added, skipped } = mergeSnippets(state.items, normalized);
+    state.items = merged;
+    updateUI();
+    await persistState();
+    handleCloseImportExport();
+    const suffix = skipped ? ` (${skipped} duplicates skipped)` : '';
+    createToast(`Imported ${added} new snippet${added !== 1 ? 's' : ''}${suffix}`);
+  } catch (error) {
+    console.error('Failed to import snippets:', error);
+    createToast('Failed to import snippets');
   }
 }
 

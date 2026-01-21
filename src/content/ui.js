@@ -48,13 +48,13 @@ export function createFAB(count, onClick) {
  * @param {Function} config.onSnippetClick - Snippet click handler (snippet) => void
  * @returns {HTMLElement} Panel element
  */
-export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick }) {
+export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onManage }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
   
-  const header = createPanelHeader({ onCopy, onClear, onClose, snippetCount: snippets.length });
+  const header = createPanelHeader({ onCopy, onClear, onClose, onManage, snippetCount: snippets.length });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick });
   const footer = createPanelFooter();
   
@@ -68,7 +68,7 @@ export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSn
 /**
  * Creates the panel header.
  */
-function createPanelHeader({ onCopy, onClear, onClose, snippetCount }) {
+function createPanelHeader({ onCopy, onClear, onClose, onManage, snippetCount }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   
@@ -80,19 +80,25 @@ function createPanelHeader({ onCopy, onClear, onClose, snippetCount }) {
   actions.className = 'ce-panel-actions';
   
   const copyBtn = document.createElement('button');
-  copyBtn.className = 'ce-btn ce-btn-secondary';
+  copyBtn.className = 'ce-btn ce-btn-secondary ce-btn-copy';
   copyBtn.textContent = 'Copy';
   copyBtn.setAttribute('aria-label', 'Copy all snippets');
   copyBtn.addEventListener('click', onCopy);
   copyBtn.disabled = snippetCount === 0;
   
   const clearBtn = document.createElement('button');
-  clearBtn.className = 'ce-btn ce-btn-secondary';
+  clearBtn.className = 'ce-btn ce-btn-secondary ce-btn-clear';
   clearBtn.textContent = 'Clear';
   clearBtn.setAttribute('aria-label', 'Clear all snippets');
   clearBtn.addEventListener('click', onClear);
   clearBtn.disabled = snippetCount === 0;
   
+  const manageBtn = document.createElement('button');
+  manageBtn.className = 'ce-btn ce-btn-secondary ce-btn-manage';
+  manageBtn.textContent = 'Import/Export';
+  manageBtn.setAttribute('aria-label', 'Import or export snippets');
+  manageBtn.addEventListener('click', onManage);
+
   const closeBtn = document.createElement('button');
   closeBtn.className = 'ce-btn ce-btn-icon';
   closeBtn.setAttribute('aria-label', 'Close panel');
@@ -101,6 +107,7 @@ function createPanelHeader({ onCopy, onClear, onClose, snippetCount }) {
   
   actions.appendChild(copyBtn);
   actions.appendChild(clearBtn);
+  actions.appendChild(manageBtn);
   actions.appendChild(closeBtn);
   
   header.appendChild(title);
@@ -183,6 +190,163 @@ function createPanelFooter() {
 }
 
 /**
+ * Creates the import/export modal.
+ * @param {Object} config - Modal configuration
+ * @returns {HTMLElement} Modal overlay
+ */
+export function createImportExportModal({ snippetCount, onClose, onExportJson, onExportMarkdown, onImport }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'ce-modal-overlay ce-extension';
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      onClose();
+    }
+  });
+
+  const modal = document.createElement('div');
+  modal.className = 'ce-modal ce-modal-show';
+
+  const body = document.createElement('div');
+  body.className = 'ce-modal-body';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-modal-title-row';
+
+  const title = document.createElement('h3');
+  title.className = 'ce-modal-title';
+  title.textContent = 'Import / Export';
+
+  const closeIcon = document.createElement('button');
+  closeIcon.className = 'ce-btn ce-btn-icon';
+  closeIcon.setAttribute('aria-label', 'Close import/export');
+  closeIcon.innerHTML = '×';
+  closeIcon.addEventListener('click', onClose);
+
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeIcon);
+
+  const message = document.createElement('p');
+  message.className = 'ce-modal-message';
+  message.textContent = 'Export your snippets as JSON or Markdown, or import a JSON backup.';
+
+  const exportSection = document.createElement('div');
+  exportSection.className = 'ce-modal-section';
+
+  const exportLabel = document.createElement('div');
+  exportLabel.className = 'ce-modal-label';
+  exportLabel.textContent = 'Export';
+
+  const exportRow = document.createElement('div');
+  exportRow.className = 'ce-modal-row';
+
+  const exportJsonBtn = document.createElement('button');
+  exportJsonBtn.className = 'ce-btn ce-btn-secondary';
+  exportJsonBtn.textContent = 'Export JSON';
+  exportJsonBtn.disabled = snippetCount === 0;
+  exportJsonBtn.addEventListener('click', onExportJson);
+
+  const exportMdBtn = document.createElement('button');
+  exportMdBtn.className = 'ce-btn ce-btn-secondary';
+  exportMdBtn.textContent = 'Export Markdown';
+  exportMdBtn.disabled = snippetCount === 0;
+  exportMdBtn.addEventListener('click', onExportMarkdown);
+
+  exportRow.appendChild(exportJsonBtn);
+  exportRow.appendChild(exportMdBtn);
+  exportSection.appendChild(exportLabel);
+  exportSection.appendChild(exportRow);
+
+  const importSection = document.createElement('div');
+  importSection.className = 'ce-modal-section';
+
+  const importLabel = document.createElement('div');
+  importLabel.className = 'ce-modal-label';
+  importLabel.textContent = 'Import (JSON)';
+
+  const importRow = document.createElement('div');
+  importRow.className = 'ce-modal-row';
+
+  const radioGroup = document.createElement('div');
+  radioGroup.className = 'ce-radio-group';
+
+  const mergeId = `ce-import-merge-${Date.now()}`;
+  const replaceId = `ce-import-replace-${Date.now()}`;
+
+  const mergeLabel = document.createElement('label');
+  mergeLabel.className = 'ce-radio';
+  const mergeInput = document.createElement('input');
+  mergeInput.type = 'radio';
+  mergeInput.name = 'ce-import-mode';
+  mergeInput.id = mergeId;
+  mergeInput.checked = true;
+  mergeLabel.appendChild(mergeInput);
+  mergeLabel.append('Merge (skip duplicates)');
+
+  const replaceLabel = document.createElement('label');
+  replaceLabel.className = 'ce-radio';
+  const replaceInput = document.createElement('input');
+  replaceInput.type = 'radio';
+  replaceInput.name = 'ce-import-mode';
+  replaceInput.id = replaceId;
+  replaceLabel.appendChild(replaceInput);
+  replaceLabel.append('Replace existing');
+
+  radioGroup.appendChild(mergeLabel);
+  radioGroup.appendChild(replaceLabel);
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+
+  const chooseBtn = document.createElement('button');
+  chooseBtn.className = 'ce-btn ce-btn-secondary';
+  chooseBtn.textContent = 'Choose JSON';
+  chooseBtn.addEventListener('click', () => fileInput.click());
+
+  const fileName = document.createElement('div');
+  fileName.className = 'ce-file-name';
+  fileName.textContent = 'No file selected';
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    fileName.textContent = file.name;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onImport(file, mode);
+    fileInput.value = '';
+  });
+
+  importRow.appendChild(chooseBtn);
+  importRow.appendChild(fileName);
+  importSection.appendChild(importLabel);
+  importSection.appendChild(radioGroup);
+  importSection.appendChild(importRow);
+
+  const actions = document.createElement('div');
+  actions.className = 'ce-modal-actions';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ce-btn ce-btn-secondary';
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', onClose);
+
+  actions.appendChild(closeBtn);
+
+  body.appendChild(titleRow);
+  body.appendChild(message);
+  body.appendChild(exportSection);
+  body.appendChild(importSection);
+
+  modal.appendChild(body);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  overlay.appendChild(fileInput);
+
+  return overlay;
+}
+
+/**
  * Creates a toast notification.
  * @param {string} message - Toast message
  * @param {number} duration - Duration in milliseconds
@@ -256,8 +420,8 @@ export function updatePanel(panel, snippets, onRemove, onSnippetClick) {
   }
   
   // Update button states
-  const copyBtn = panel.querySelector('.ce-btn[aria-label="Copy all snippets"]');
-  const clearBtn = panel.querySelector('.ce-btn[aria-label="Clear all snippets"]');
+  const copyBtn = panel.querySelector('.ce-btn-copy');
+  const clearBtn = panel.querySelector('.ce-btn-clear');
   if (copyBtn) copyBtn.disabled = snippets.length === 0;
   if (clearBtn) clearBtn.disabled = snippets.length === 0;
 }
