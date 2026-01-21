@@ -429,7 +429,9 @@ function navigateToSource(snippet) {
     // If we couldn't find it in-page and we know the snippet came from another conversation,
     // offer to open the original conversation (user gesture: snippet click).
     const currentConversationId = getConversationId();
-    if (anchor.conversationId && currentConversationId && currentConversationId !== anchor.conversationId) {
+    // On the main page (no currentConversationId), or in a different conversation,
+    // offer to open the original source conversation.
+    if (anchor.conversationId && (!currentConversationId || currentConversationId !== anchor.conversationId)) {
       const conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
       showConfirmModal({
         title: 'Open parent conversation?',
