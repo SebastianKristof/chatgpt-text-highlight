@@ -59,6 +59,10 @@ Icons are included in the `icons/` directory. They feature a simple design with 
 - Chrome 88+ (Manifest V3)
 - Edge 88+ (Manifest V3)
 
+## Privacy
+
+See `PRIVACY_POLICY.md`.
+
 ## License
 
 MIT

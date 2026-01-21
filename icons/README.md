@@ -6,3 +6,5 @@ Place icon files here:
 - `icon128.png` - 128x128 pixels
 
 You can create simple icons or use a placeholder image generator. The extension will work without icons, but Chrome may show a warning.
+
+Source logo: `assets/logo.svg` (export to PNG sizes above).

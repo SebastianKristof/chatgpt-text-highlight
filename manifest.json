@@ -4,13 +4,7 @@
   "version": "1.0.0",
   "description": "Collect and navigate text snippets from ChatGPT conversations",
   "permissions": [
-    "storage",
-    "activeTab",
-    "scripting"
-  ],
-  "host_permissions": [
-    "https://chat.openai.com/*",
-    "https://chatgpt.com/*"
+    "storage"
   ],
   "content_scripts": [
     {
