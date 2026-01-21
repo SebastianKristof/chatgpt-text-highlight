@@ -161,7 +161,16 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick) {
   
   const timestamp = new Date(snippet.timestamp);
   const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  meta.textContent = timeStr;
+  const timeEl = document.createElement('span');
+  timeEl.textContent = timeStr;
+  meta.appendChild(timeEl);
+  
+  if (snippet.duplicateIndex && snippet.duplicateIndex > 1) {
+    const dup = document.createElement('span');
+    dup.className = 'ce-duplicate-badge';
+    dup.textContent = `Duplicate #${snippet.duplicateIndex}`;
+    meta.appendChild(dup);
+  }
   
   const removeBtn = document.createElement('button');
   removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small';
@@ -194,7 +203,7 @@ function createPanelFooter() {
  * @param {Object} config - Modal configuration
  * @returns {HTMLElement} Modal overlay
  */
-export function createImportExportModal({ snippetCount, onClose, onExportJson, onExportMarkdown, onImport }) {
+export function createImportExportModal({ snippetCount, onClose, onExportJson, onExportMarkdown, onPreview, onConfirm }) {
   const overlay = document.createElement('div');
   overlay.className = 'ce-modal-overlay ce-extension';
   overlay.addEventListener('click', (e) => {
@@ -308,12 +317,50 @@ export function createImportExportModal({ snippetCount, onClose, onExportJson, o
   fileName.className = 'ce-file-name';
   fileName.textContent = 'No file selected';
 
+  const status = document.createElement('div');
+  status.className = 'ce-import-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = 'No import yet.';
+
+  const setStatus = (message, type = 'info') => {
+    status.textContent = message;
+    status.classList.remove('is-success', 'is-error');
+    if (type === 'success') status.classList.add('is-success');
+    if (type === 'error') status.classList.add('is-error');
+  };
+
+  const preview = document.createElement('div');
+  preview.className = 'ce-import-preview';
+  preview.textContent = 'Select a JSON file to preview import.';
+
+  const setPreview = (message, type = 'info') => {
+    preview.textContent = message;
+    preview.classList.remove('is-success', 'is-error');
+    if (type === 'success') preview.classList.add('is-success');
+    if (type === 'error') preview.classList.add('is-error');
+  };
+
+  let pendingImport = null;
+  let lastFile = null;
+
+  const setPending = (data) => {
+    pendingImport = data;
+    confirmBtn.disabled = !pendingImport;
+  };
+
+  const runPreview = () => {
+    if (!lastFile) return;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onPreview(lastFile, mode, setStatus, setPreview, setPending);
+  };
+
   fileInput.addEventListener('change', () => {
     const file = fileInput.files?.[0];
     if (!file) return;
+    lastFile = file;
     fileName.textContent = file.name;
-    const mode = mergeInput.checked ? 'merge' : 'replace';
-    onImport(file, mode);
+    runPreview();
     fileInput.value = '';
   });
 
@@ -322,15 +369,28 @@ export function createImportExportModal({ snippetCount, onClose, onExportJson, o
   importSection.appendChild(importLabel);
   importSection.appendChild(radioGroup);
   importSection.appendChild(importRow);
+  importSection.appendChild(status);
+  importSection.appendChild(preview);
 
   const actions = document.createElement('div');
   actions.className = 'ce-modal-actions';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'ce-btn ce-btn-secondary';
+  confirmBtn.textContent = 'Confirm import';
+  confirmBtn.disabled = true;
+  confirmBtn.addEventListener('click', () => {
+    if (!pendingImport) return;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onConfirm(pendingImport, mode, setStatus, setPreview, setPending);
+  });
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'ce-btn ce-btn-secondary';
   closeBtn.textContent = 'Close';
   closeBtn.addEventListener('click', onClose);
 
+  actions.appendChild(confirmBtn);
   actions.appendChild(closeBtn);
 
   body.appendChild(titleRow);
@@ -342,6 +402,9 @@ export function createImportExportModal({ snippetCount, onClose, onExportJson, o
   modal.appendChild(actions);
   overlay.appendChild(modal);
   overlay.appendChild(fileInput);
+
+  mergeInput.addEventListener('change', runPreview);
+  replaceInput.addEventListener('change', runPreview);
 
   return overlay;
 }

@@ -351,6 +351,18 @@
   letter-spacing: -0.01em;
 }
 
+.ce-duplicate-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
 .ce-snippet-actions {
   position: absolute;
   top: 12px;
@@ -579,6 +591,40 @@
 .ce-file-name {
   font-size: 12px;
   color: #8a8a8a;
+}
+
+.ce-import-status {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.ce-import-preview {
+  font-size: 12px;
+  color: #1a1a1a;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.ce-import-preview.is-success {
+  border-color: rgba(21, 128, 61, 0.4);
+  background: rgba(21, 128, 61, 0.08);
+  color: #14532d;
+}
+
+.ce-import-preview.is-error {
+  border-color: rgba(180, 35, 24, 0.35);
+  background: rgba(180, 35, 24, 0.08);
+  color: #7f1d1d;
+}
+
+.ce-import-status.is-success {
+  color: #15803d;
+}
+
+.ce-import-status.is-error {
+  color: #b42318;
 }
 
 .ce-modal-actions {

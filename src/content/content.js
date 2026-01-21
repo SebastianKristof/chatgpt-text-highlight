@@ -60,6 +60,28 @@ function normalizeImportedSnippets(items) {
     .filter(Boolean);
 }
 
+function expandImportDuplicates(items) {
+  const seen = new Map();
+  const expanded = [];
+  let duplicates = 0;
+  items.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    const count = seen.get(key) || 0;
+    if (count === 0) {
+      expanded.push(snippet);
+    } else {
+      expanded.push({
+        ...snippet,
+        id: generateSnippetId(),
+        duplicateIndex: count + 1
+      });
+      duplicates += 1;
+    }
+    seen.set(key, count + 1);
+  });
+  return { items: expanded, duplicates };
+}
+
 function dedupeSnippets(items) {
   const seen = new Set();
   const deduped = [];
@@ -77,20 +99,36 @@ function dedupeSnippets(items) {
 }
 
 function mergeSnippets(existing, incoming) {
-  const seen = new Set(existing.map(snippetKey));
-  const merged = [...existing];
+  const existingMap = new Map(existing.map((snippet) => [snippetKey(snippet), snippet]));
+  const existingKeys = new Set(existingMap.keys());
+  const seenIncoming = new Set();
+  const merged = [];
   let added = 0;
   let skipped = 0;
+
   incoming.forEach((snippet) => {
     const key = snippetKey(snippet);
-    if (seen.has(key)) {
+    if (seenIncoming.has(key)) {
       skipped += 1;
       return;
     }
-    seen.add(key);
+    seenIncoming.add(key);
+    if (existingMap.has(key)) {
+      skipped += 1;
+      merged.push(existingMap.get(key));
+      return;
+    }
     merged.push(snippet);
     added += 1;
   });
+
+  existing.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (!seenIncoming.has(key) && existingKeys.has(key)) {
+      merged.push(snippet);
+    }
+  });
+
   return { items: merged, added, skipped };
 }
 
@@ -323,7 +361,8 @@ function handleOpenImportExport() {
     onClose: handleCloseImportExport,
     onExportJson: handleExportJson,
     onExportMarkdown: handleExportMarkdown,
-    onImport: handleImport
+    onPreview: handlePreviewImport,
+    onConfirm: handleConfirmImport
   });
   document.body.appendChild(importExportModal);
   modalOpen = true;
@@ -360,39 +399,74 @@ function handleExportMarkdown() {
   createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
 }
 
-async function handleImport(file, mode) {
+async function handlePreviewImport(file, mode, setStatus, setPreview, setPending) {
   try {
     const text = await file.text();
     const parsed = JSON.parse(text);
     const items = Array.isArray(parsed) ? parsed : parsed.items;
     if (!Array.isArray(items)) {
-      createToast('Invalid JSON format');
+      setStatus('Invalid JSON format.', 'error');
+      setPreview('Preview unavailable.', 'error');
+      setPending(null);
       return;
     }
     const normalized = normalizeImportedSnippets(items);
     if (normalized.length === 0) {
-      createToast('No valid snippets found');
+      setStatus('No valid snippets found.', 'error');
+      setPreview('Preview unavailable.', 'error');
+      setPending(null);
+      return;
+    }
+    const { items: expanded, duplicates } = expandImportDuplicates(normalized);
+    if (mode === 'replace') {
+      const preview = `Preview: ${expanded.length} snippet${expanded.length !== 1 ? 's' : ''} will replace ${state.items.length}.` +
+        (duplicates ? ` ${duplicates} duplicate${duplicates !== 1 ? 's' : ''} in file will be labeled.` : '');
+      setStatus('Preview ready.', 'success');
+      setPreview(preview, 'success');
+      setPending({ items: expanded });
+      return;
+    }
+    const { items: merged, added, skipped } = mergeSnippets(state.items, expanded);
+    const preview = `Preview: add ${added} new, skip ${skipped} duplicate${skipped !== 1 ? 's' : ''}.` +
+      ` Total after import: ${merged.length}.` +
+      (duplicates ? ` ${duplicates} duplicate${duplicates !== 1 ? 's' : ''} in file will be labeled.` : '');
+    setStatus('Preview ready.', 'success');
+    setPreview(preview, 'success');
+    setPending({ items: expanded });
+  } catch (error) {
+    console.error('Failed to import snippets:', error);
+    setStatus('Failed to read import file.', 'error');
+    setPreview('Preview unavailable.', 'error');
+    setPending(null);
+  }
+}
+
+async function handleConfirmImport(pending, mode, setStatus, setPreview, setPending) {
+  try {
+    if (!pending?.items) {
+      setStatus('No preview data available.', 'error');
       return;
     }
     if (mode === 'replace') {
-      const { items: deduped, skipped } = dedupeSnippets(normalized);
-      state.items = deduped;
+      state.items = pending.items;
       updateUI();
       await persistState();
-      handleCloseImportExport();
-      createToast(`Imported ${deduped.length} snippet${deduped.length !== 1 ? 's' : ''}${skipped ? ` (${skipped} duplicates skipped)` : ''}`);
+      setStatus(`Imported ${pending.items.length} snippet${pending.items.length !== 1 ? 's' : ''}.`, 'success');
+      setPreview('Import complete. You can select another file to import.', 'success');
+      setPending(null);
       return;
     }
-    const { items: merged, added, skipped } = mergeSnippets(state.items, normalized);
+    const { items: merged, added, skipped } = mergeSnippets(state.items, pending.items);
     state.items = merged;
     updateUI();
     await persistState();
-    handleCloseImportExport();
     const suffix = skipped ? ` (${skipped} duplicates skipped)` : '';
-    createToast(`Imported ${added} new snippet${added !== 1 ? 's' : ''}${suffix}`);
+    setStatus(`Imported ${added} new snippet${added !== 1 ? 's' : ''}${suffix}.`, 'success');
+    setPreview('Import complete. You can select another file to import.', 'success');
+    setPending(null);
   } catch (error) {
     console.error('Failed to import snippets:', error);
-    createToast('Failed to import snippets');
+    setStatus('Failed to import snippets.', 'error');
   }
 }
 
