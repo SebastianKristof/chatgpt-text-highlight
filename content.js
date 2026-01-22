@@ -720,6 +720,9 @@ function cleanupMarkdown(text) {
 // ============================================================================
 
 const CONTAINER_ID = 'ce-root';
+const FAB_DRAG_PADDING = 12;
+const FAB_DRAG_THRESHOLD = 4;
+const FAB_LONG_PRESS_MS = 180;
 
 function createContainer() {
   let container = document.getElementById(CONTAINER_ID);
@@ -731,6 +734,106 @@ function createContainer() {
   return container;
 }
 
+let fabDragState = {
+  active: false,
+  longPressReady: false,
+  moved: false,
+  startX: 0,
+  startY: 0,
+  startLeft: 0,
+  startTop: 0,
+  width: 0,
+  height: 0,
+  longPressTimer: null
+};
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getChatHeaderBottom() {
+  const header = document.querySelector('header');
+  if (!header) return 0;
+  const rect = header.getBoundingClientRect();
+  return Math.max(0, rect.bottom || 0);
+}
+
+function positionPanel(panelEl) {
+  if (!panelEl) return;
+  const padding = 16;
+  const headerBottom = getChatHeaderBottom();
+  const top = headerBottom + padding;
+  const maxHeight = Math.max(240, window.innerHeight - top - padding);
+  panelEl.style.setProperty('--ce-panel-top', `${top}px`);
+  panelEl.style.setProperty('--ce-panel-right', `${padding}px`);
+  panelEl.style.setProperty('--ce-panel-max-height', `${maxHeight}px`);
+}
+
+function applyContainerPosition(left, top) {
+  container.style.left = `${left}px`;
+  container.style.top = `${top}px`;
+  container.style.right = 'auto';
+  container.style.bottom = 'auto';
+  container.style.transform = 'none';
+}
+
+function enableFabDragging(fabEl) {
+  fabEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const rect = container.getBoundingClientRect();
+    fabDragState.active = true;
+    fabDragState.longPressReady = false;
+    fabDragState.moved = false;
+    fabDragState.startX = e.clientX;
+    fabDragState.startY = e.clientY;
+    fabDragState.startLeft = rect.left;
+    fabDragState.startTop = rect.top;
+    fabDragState.width = rect.width;
+    fabDragState.height = rect.height;
+    if (fabDragState.longPressTimer) {
+      clearTimeout(fabDragState.longPressTimer);
+    }
+    fabDragState.longPressTimer = setTimeout(() => {
+      fabDragState.longPressReady = true;
+      fabEl.classList.add('ce-fab-dragging');
+    }, FAB_LONG_PRESS_MS);
+    fabEl.setPointerCapture?.(e.pointerId);
+  });
+  
+  fabEl.addEventListener('pointermove', (e) => {
+    if (!fabDragState.active) return;
+    if (!fabDragState.longPressReady) return;
+    const dx = e.clientX - fabDragState.startX;
+    const dy = e.clientY - fabDragState.startY;
+    if (!fabDragState.moved && Math.hypot(dx, dy) < FAB_DRAG_THRESHOLD) {
+      return;
+    }
+    fabDragState.moved = true;
+    e.preventDefault();
+    
+    const maxLeft = window.innerWidth - fabDragState.width - FAB_DRAG_PADDING;
+    const maxTop = window.innerHeight - fabDragState.height - FAB_DRAG_PADDING;
+    const nextLeft = clamp(fabDragState.startLeft + dx, FAB_DRAG_PADDING, maxLeft);
+    const nextTop = clamp(fabDragState.startTop + dy, FAB_DRAG_PADDING, maxTop);
+    applyContainerPosition(nextLeft, nextTop);
+  });
+  
+  const endDrag = (e) => {
+    if (!fabDragState.active) return;
+    fabDragState.active = false;
+    fabDragState.longPressReady = false;
+    fabEl.releasePointerCapture?.(e.pointerId);
+    if (fabDragState.longPressTimer) {
+      clearTimeout(fabDragState.longPressTimer);
+      fabDragState.longPressTimer = null;
+    }
+    fabEl.classList.remove('ce-fab-dragging');
+  };
+  
+  fabEl.addEventListener('pointerup', endDrag);
+  fabEl.addEventListener('pointercancel', endDrag);
+}
+
 function createFAB(count, onClick) {
   const fab = document.createElement('button');
   fab.className = 'ce-fab';
@@ -739,7 +842,15 @@ function createFAB(count, onClick) {
     <span class="ce-fab-text">Collected</span>
     <span class="ce-fab-count">${count}</span>
   `;
-  fab.addEventListener('click', onClick);
+  fab.addEventListener('click', (e) => {
+    if (fabDragState.moved) {
+      fabDragState.moved = false;
+      e.preventDefault();
+      return;
+    }
+    onClick(e);
+  });
+  enableFabDragging(fab);
   return fab;
 }
 
@@ -1379,16 +1490,24 @@ function createSelectionToolbar(selection, range) {
   toolbar.appendChild(saveBtn);
   toolbar.appendChild(copyBtn);
   
-  const container = document.getElementById(CONTAINER_ID) || createContainer();
-  container.appendChild(toolbar);
+  document.body.appendChild(toolbar);
   selectionToolbar = toolbar;
   
   // Position relative to FAB
   if (fab) {
-    const fabRect = fab.getBoundingClientRect();
-    const containerRect = container.getBoundingClientRect();
-    toolbar.style.top = `${fabRect.top - containerRect.top - toolbar.offsetHeight - 8}px`;
-    toolbar.style.left = `${fabRect.right - containerRect.left - toolbar.offsetWidth}px`;
+    const padding = 12;
+    const toolbarWidth = toolbar.offsetWidth;
+    const toolbarHeight = toolbar.offsetHeight;
+    const headerBottom = getChatHeaderBottom();
+    const safeTop = headerBottom + padding;
+    const safeBottom = window.innerHeight - toolbarHeight - padding;
+    const selectionRect = range?.getBoundingClientRect?.();
+    let desiredTop = selectionRect?.top ? selectionRect.top - toolbarHeight - 8 : safeTop;
+    if (!Number.isFinite(desiredTop)) desiredTop = safeTop;
+    desiredTop = clamp(desiredTop, safeTop, safeBottom);
+    const desiredLeft = window.innerWidth - toolbarWidth - padding;
+    toolbar.style.left = `${desiredLeft}px`;
+    toolbar.style.top = `${desiredTop}px`;
   }
   
   // Animate in
@@ -2142,7 +2261,8 @@ function renderUI() {
     searchQuery: state.searchQuery
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
-  container.appendChild(panel);
+  document.body.appendChild(panel);
+  positionPanel(panel);
 }
 
 function updateUI() {
@@ -2206,6 +2326,11 @@ function setupEventListeners() {
   document.addEventListener('scroll', () => {
     hideSelectionToolbar();
   }, true);
+  window.addEventListener('resize', () => {
+    if (panel) {
+      positionPanel(panel);
+    }
+  });
 }
 
 function handleSelection(e) {
@@ -2516,6 +2641,9 @@ function togglePanel() {
   state.panelOpen = !state.panelOpen;
   if (panel) {
     panel.classList.toggle('ce-panel-open', state.panelOpen);
+    if (state.panelOpen) {
+      positionPanel(panel);
+    }
   }
   // Hide selection toolbar when opening/closing panel
   hideSelectionToolbar();

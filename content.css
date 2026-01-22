@@ -35,6 +35,7 @@
   font-size: 15px;
   font-weight: 500;
   letter-spacing: -0.01em;
+  cursor: pointer;
 }
 
 .ce-fab:hover {
@@ -47,6 +48,14 @@
 .ce-fab:active {
   transform: translateY(0);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.ce-fab.ce-fab-dragging {
+  cursor: grab;
+}
+
+.ce-fab.ce-fab-dragging:active {
+  cursor: grabbing;
 }
 
 .ce-fab-text {
@@ -71,12 +80,12 @@
 
 /* Panel */
 .ce-panel {
-  position: absolute;
-  top: 0;
-  right: 88px;
+  position: fixed;
+  top: var(--ce-panel-top, 16px);
+  right: var(--ce-panel-right, 24px);
   width: 420px;
   max-width: calc(100vw - 120px);
-  max-height: calc(100vh - 48px);
+  max-height: var(--ce-panel-max-height, calc(100vh - 48px));
   background: #ffffff;
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 16px 64px rgba(0, 0, 0, 0.04);
@@ -84,16 +93,17 @@
   display: flex;
   flex-direction: column;
   opacity: 0;
-  transform: translateY(-50%) scale(0.96) translateX(8px);
+  transform: translateX(8px) scale(0.96);
   pointer-events: none;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
   backdrop-filter: blur(20px);
+  z-index: 2147483646;
 }
 
 .ce-panel-open {
   opacity: 1;
-  transform: translateY(-50%) scale(1) translateX(0);
+  transform: translateX(0) scale(1);
   pointer-events: auto;
 }
 
@@ -398,7 +408,7 @@
 
 /* Selection Toolbar - Elegant toolbar near FAB */
 .ce-selection-toolbar {
-  position: absolute;
+  position: fixed;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -411,7 +421,7 @@
   opacity: 0;
   transform: translateY(6px);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 1000001;
+  z-index: 2147483647;
   align-items: stretch;
   backdrop-filter: blur(20px);
 }
@@ -675,9 +685,6 @@
   .ce-panel {
     width: calc(100vw - 32px);
     max-width: 420px;
-    max-height: calc(100vh - 48px);
-    top: 0;
-    right: 76px;
   }
   
   .ce-selection-toolbar {
