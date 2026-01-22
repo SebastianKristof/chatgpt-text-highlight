@@ -18,4 +18,4 @@ All snippets are stored locally using `chrome.storage.local` and never leave you
 We do not share any data with third parties.
 
 ## Contact
-For questions about this policy, contact: support@example.com
+For questions about this policy, please open an issue on [GitHub](https://github.com/yourusername/chatgpt-text-highlight/issues).

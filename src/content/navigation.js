@@ -160,11 +160,11 @@ export function applyTransientHighlight(element, startOffset, endOffset) {
 /**
  * Navigates to the source of a snippet and applies transient highlight.
  * @param {Object} snippet - Snippet object with anchor
- * @returns {boolean} True if navigation succeeded, false otherwise
+ * @returns {{success: boolean, reason?: string}} Result object with success status and optional reason
  */
 export function navigateToSource(snippet) {
   if (!snippet || !snippet.anchor) {
-    return false;
+    return { success: false, reason: 'Snippet has no anchor information' };
   }
   
   const { anchor } = snippet;
@@ -173,8 +173,10 @@ export function navigateToSource(snippet) {
   if (anchor.conversationId) {
     const currentConversationId = getConversationId();
     if (currentConversationId && currentConversationId !== anchor.conversationId) {
-      // Different conversation - could navigate, but for Stage 1, just return false
-      return false;
+      return { 
+        success: false, 
+        reason: 'Source not found in current conversation. The snippet is from a different conversation.' 
+      };
     }
   }
   
@@ -196,7 +198,17 @@ export function navigateToSource(snippet) {
   }
   
   if (!messageBlock) {
-    return false;
+    const currentConversationId = getConversationId();
+    if (anchor.conversationId && currentConversationId && currentConversationId === anchor.conversationId) {
+      return { 
+        success: false, 
+        reason: 'Source message not found. It may have been deleted or the page needs to be scrolled to load it.' 
+      };
+    }
+    return { 
+      success: false, 
+      reason: 'Source not found. The message may be in a different conversation or may have been deleted.' 
+    };
   }
   
   // Apply transient highlight
@@ -215,7 +227,7 @@ export function navigateToSource(snippet) {
     messageBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   
-  return true;
+  return { success: true };
 }
 
 /**

@@ -35,6 +35,7 @@ export async function loadSnippets() {
  * Saves snippets to storage.
  * @param {Array} snippets - Array of snippet objects
  * @returns {Promise<void>}
+ * @throws {Error} With user-friendly message if quota exceeded
  */
 export async function saveSnippets(snippets) {
   try {
@@ -43,8 +44,25 @@ export async function saveSnippets(snippets) {
       items: snippets
     };
     await chrome.storage.local.set({ [STORAGE_KEY]: data });
+    
+    // Check for quota exceeded error
+    if (chrome.runtime.lastError) {
+      const error = chrome.runtime.lastError;
+      if (error.message && error.message.includes('quota')) {
+        throw new Error('Storage quota exceeded. Please clear some snippets or export your data.');
+      }
+      throw new Error(error.message || 'Failed to save snippets');
+    }
   } catch (error) {
     console.error('Failed to save snippets:', error);
+    // Re-throw with user-friendly message if it's a quota error
+    if (error.message && error.message.includes('quota')) {
+      throw error;
+    }
+    // Check if it's a quota error by message content
+    if (error.message && (error.message.includes('QUOTA_BYTES') || error.message.includes('exceeded'))) {
+      throw new Error('Storage quota exceeded. Please clear some snippets or export your data.');
+    }
     throw error;
   }
 }

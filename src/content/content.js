@@ -12,8 +12,21 @@ import { createContainer, createFAB, createPanel, createImportExportModal, creat
 // State
 let state = {
   items: [],
-  panelOpen: false
+  panelOpen: false,
+  settings: {
+    autoSave: true, // Default to auto-save enabled
+    theme: 'auto' // Default to auto (follows system)
+  }
 };
+
+// Theme management
+const THEME_STORAGE_KEY = 'settings';
+const DEFAULT_THEME = 'auto';
+
+// Deduplication state
+let lastSnippetHash = null;
+let lastSnippetTime = 0;
+const DEDUPE_WINDOW_MS = 1000; // 1 second
 
 // UI elements
 let container = null;
@@ -23,6 +36,24 @@ let importExportModal = null;
 let modalOpen = false;
 
 const SCHEMA_VERSION = 1;
+
+/**
+ * Debounce utility function
+ * @param {Function} func - Function to debounce
+ * @param {number} wait - Wait time in milliseconds
+ * @returns {Function} Debounced function
+ */
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
 
 function generateSnippetId() {
   return `snippet_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -166,6 +197,18 @@ async function init() {
   // Load snippets from storage
   await loadState();
   
+  // Apply theme
+  applyTheme(state.settings.theme || DEFAULT_THEME);
+  
+  // Listen to system theme changes for auto mode
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      if (state.settings.theme === 'auto') {
+        applyTheme('auto');
+      }
+    });
+  }
+  
   // Create UI
   renderUI();
   
@@ -179,12 +222,43 @@ async function init() {
 }
 
 /**
+ * Applies theme to the extension UI.
+ * @param {string} theme - Theme mode: 'light', 'dark', or 'auto'
+ */
+function applyTheme(theme) {
+  if (!container) return;
+  
+  container.classList.remove('ce-theme-light', 'ce-theme-dark');
+  
+  if (theme === 'auto') {
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    container.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
+  } else {
+    container.classList.add(`ce-theme-${theme}`);
+  }
+}
+
+/**
+ * Gets current theme setting.
+ * @returns {string} Current theme
+ */
+function getCurrentTheme() {
+  return state.settings.theme || DEFAULT_THEME;
+}
+
+/**
  * Loads state from storage.
  */
 async function loadState() {
   try {
     const items = await loadSnippets();
     state.items = items;
+    
+    // Load settings
+    const settingsResult = await chrome.storage.local.get('settings');
+    if (settingsResult.settings) {
+      state.settings = { ...state.settings, ...settingsResult.settings };
+    }
   } catch (error) {
     console.error('Failed to load state:', error);
     createToast('Failed to load snippets');
@@ -197,9 +271,15 @@ async function loadState() {
 async function persistState() {
   try {
     await saveSnippets(state.items);
+    // Save settings separately
+    await chrome.storage.local.set({ settings: state.settings });
   } catch (error) {
     console.error('Failed to save state:', error);
-    createToast('Failed to save snippets');
+    // Show user-friendly error message
+    const message = error.message && error.message.includes('quota') 
+      ? 'Storage full. Please clear some snippets or export your data.'
+      : 'Failed to save snippets';
+    createToast(message);
   }
 }
 
@@ -225,7 +305,11 @@ function renderUI() {
     onClose: handleClose,
     onRemove: handleRemove,
     onSnippetClick: handleSnippetClick,
-    onManage: handleOpenImportExport
+    onManage: handleOpenImportExport,
+    onToggleAutoSave: handleToggleAutoSave,
+    autoSaveEnabled: state.settings.autoSave,
+    onToggleTheme: handleToggleTheme,
+    currentTheme: getCurrentTheme()
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   container.appendChild(panel);
@@ -248,8 +332,9 @@ function updateUI() {
  * Sets up event listeners.
  */
 function setupEventListeners() {
-  // Listen for text selection
-  document.addEventListener('mouseup', handleSelection);
+  // Listen for text selection with debounce
+  const debouncedHandleSelection = debounce(handleSelection, 100);
+  document.addEventListener('mouseup', debouncedHandleSelection);
   
   // Close panel on escape key
   document.addEventListener('keydown', (e) => {
@@ -287,8 +372,22 @@ function handleSelection(e) {
       return;
     }
     
+    // Check if auto-save is enabled
+    if (!state.settings.autoSave) {
+      return;
+    }
+    
     const snippet = buildSnippetFromSelection();
-    if (snippet) {
+    if (snippet && snippet.text && snippet.text.length >= 3) {
+      // Deduplication check
+      const hash = hashText(snippet.text);
+      const now = Date.now();
+      if (hash === lastSnippetHash && now - lastSnippetTime < DEDUPE_WINDOW_MS) {
+        return; // Skip duplicate
+      }
+      lastSnippetHash = hash;
+      lastSnippetTime = now;
+      
       addSnippet(snippet);
       
       // Show toast if truncated
@@ -474,9 +573,9 @@ async function handleConfirmImport(pending, mode, setStatus, setPreview, setPend
  * Handles snippet click for source navigation.
  */
 function handleSnippetClick(snippet) {
-  const success = navigateToSource(snippet);
-  if (!success) {
-    createToast('Source not found');
+  const result = navigateToSource(snippet);
+  if (!result.success) {
+    createToast(result.reason || 'Source not found');
   }
 }
 
@@ -498,6 +597,41 @@ function handleClose() {
   if (panel) {
     panel.classList.remove('ce-panel-open');
   }
+}
+
+/**
+ * Toggles auto-save setting.
+ */
+async function handleToggleAutoSave() {
+  state.settings.autoSave = !state.settings.autoSave;
+  await persistState();
+  updateUI();
+  createToast(`Auto-save ${state.settings.autoSave ? 'enabled' : 'disabled'}`);
+}
+
+/**
+ * Handles theme toggle.
+ */
+async function handleToggleTheme() {
+  const currentTheme = getCurrentTheme();
+  let nextTheme;
+  
+  // Cycle through: auto -> light -> dark -> auto
+  if (currentTheme === 'auto') {
+    nextTheme = 'light';
+  } else if (currentTheme === 'light') {
+    nextTheme = 'dark';
+  } else {
+    nextTheme = 'auto';
+  }
+  
+  state.settings.theme = nextTheme;
+  applyTheme(nextTheme);
+  await persistState();
+  updateUI();
+  
+  const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+  createToast(`Theme: ${themeLabels[nextTheme]}`);
 }
 
 // Initialize when DOM is ready

@@ -6,6 +6,7 @@ import { buildAnchor, findSelectionOffsets } from '../shared/anchor.js';
 import { hashText } from '../shared/hash.js';
 
 const MAX_SELECTION_SIZE = 10000; // 10k chars limit
+const MIN_SELECTION_LENGTH = 3; // Minimum characters to save a snippet
 
 /**
  * Gets the conversation ID from the current URL.
@@ -158,7 +159,7 @@ export function buildSnippetFromSelection() {
   }
   
   const selectionText = getSelectionText();
-  if (!selectionText) return null;
+  if (!selectionText || selectionText.length < MIN_SELECTION_LENGTH) return null;
   
   // Truncate if too large
   let finalText = selectionText;

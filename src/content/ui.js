@@ -46,15 +46,33 @@ export function createFAB(count, onClick) {
  * @param {Function} config.onClose - Close handler
  * @param {Function} config.onRemove - Remove handler (id) => void
  * @param {Function} config.onSnippetClick - Snippet click handler (snippet) => void
+ * @param {Function} config.onToggleAutoSave - Toggle auto-save handler (optional)
+ * @param {boolean} config.autoSaveEnabled - Whether auto-save is enabled (optional)
+ * @param {Function} config.onToggleTheme - Toggle theme handler (optional)
+ * @param {string} config.currentTheme - Current theme: 'light', 'dark', or 'auto' (optional)
+ * @param {number} config.totalCount - Total count for search counter (optional)
+ * @param {string} config.searchQuery - Current search query (optional)
  * @returns {HTMLElement} Panel element
  */
-export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onManage }) {
+export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, totalCount, searchQuery }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
   
-  const header = createPanelHeader({ onCopy, onClear, onClose, onManage, snippetCount: snippets.length });
+  const header = createPanelHeader({ 
+    onCopy, 
+    onClear, 
+    onClose, 
+    onManage, 
+    onToggleAutoSave,
+    autoSaveEnabled,
+    onToggleTheme,
+    currentTheme,
+    snippetCount: snippets.length,
+    totalCount: totalCount !== undefined ? totalCount : snippets.length,
+    searchQuery: searchQuery || ''
+  });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick });
   const footer = createPanelFooter();
   
@@ -68,16 +86,60 @@ export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSn
 /**
  * Creates the panel header.
  */
-function createPanelHeader({ onCopy, onClear, onClose, onManage, snippetCount }) {
+function createPanelHeader({ onCopy, onClear, onClose, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, snippetCount, totalCount, searchQuery }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   
+  // Title row with close icon
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-panel-title-row';
+  
   const title = document.createElement('h2');
   title.className = 'ce-panel-title';
-  title.textContent = 'Collected Snippets';
   
+  // Show search counter if search is active
+  if (searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippetCount) {
+    title.textContent = `Collected Snippets (${snippetCount} of ${totalCount})`;
+  } else {
+    title.textContent = 'Collected Snippets';
+  }
+  
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ce-btn ce-btn-icon';
+  closeBtn.setAttribute('aria-label', 'Close panel');
+  closeBtn.innerHTML = '×';
+  closeBtn.addEventListener('click', onClose);
+  
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeBtn);
+  
+  // Actions row (without close button)
   const actions = document.createElement('div');
   actions.className = 'ce-panel-actions';
+  
+  // Theme toggle button
+  if (onToggleTheme) {
+    const themeIcons = { auto: '⚙', light: '☀', dark: '🌙' };
+    const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+    const themeBtn = document.createElement('button');
+    themeBtn.className = 'ce-btn ce-btn-icon ce-btn-theme';
+    themeBtn.innerHTML = themeIcons[currentTheme] || '⚙';
+    themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
+    themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
+    themeBtn.addEventListener('click', onToggleTheme);
+    actions.appendChild(themeBtn);
+  }
+  
+  // Auto-save toggle button
+  if (onToggleAutoSave) {
+    const autoSaveBtn = document.createElement('button');
+    autoSaveBtn.className = 'ce-btn ce-btn-secondary ce-btn-auto-save';
+    autoSaveBtn.textContent = autoSaveEnabled ? 'Auto-save: ON' : 'Auto-save: OFF';
+    autoSaveBtn.setAttribute('aria-label', `Auto-save is ${autoSaveEnabled ? 'enabled' : 'disabled'}`);
+    autoSaveBtn.title = autoSaveEnabled ? 'Click to disable auto-save' : 'Click to enable auto-save';
+    autoSaveBtn.addEventListener('click', onToggleAutoSave);
+    actions.appendChild(autoSaveBtn);
+  }
   
   const copyBtn = document.createElement('button');
   copyBtn.className = 'ce-btn ce-btn-secondary ce-btn-copy';
@@ -98,19 +160,12 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, snippetCount })
   manageBtn.textContent = 'Import/Export';
   manageBtn.setAttribute('aria-label', 'Import or export snippets');
   manageBtn.addEventListener('click', onManage);
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'ce-btn ce-btn-icon';
-  closeBtn.setAttribute('aria-label', 'Close panel');
-  closeBtn.innerHTML = '×';
-  closeBtn.addEventListener('click', onClose);
   
   actions.appendChild(copyBtn);
   actions.appendChild(clearBtn);
   actions.appendChild(manageBtn);
-  actions.appendChild(closeBtn);
   
-  header.appendChild(title);
+  header.appendChild(titleRow);
   header.appendChild(actions);
   
   return header;
@@ -462,8 +517,10 @@ export function updateFABCount(fab, count) {
  * @param {Array} snippets - New snippets array
  * @param {Function} onRemove - Remove handler
  * @param {Function} onSnippetClick - Snippet click handler
+ * @param {number} totalCount - Total count for search counter (optional)
+ * @param {string} searchQuery - Current search query (optional)
  */
-export function updatePanel(panel, snippets, onRemove, onSnippetClick) {
+export function updatePanel(panel, snippets, onRemove, onSnippetClick, totalCount, searchQuery) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   
@@ -473,13 +530,23 @@ export function updatePanel(panel, snippets, onRemove, onSnippetClick) {
   if (snippets.length === 0) {
     const emptyState = document.createElement('div');
     emptyState.className = 'ce-empty-state';
-    emptyState.textContent = 'Select text to save a snippet';
+    emptyState.textContent = searchQuery && searchQuery.trim() 
+      ? 'No snippets match your search' 
+      : 'Select text to save a snippet';
     list.appendChild(emptyState);
   } else {
     snippets.forEach((snippet, index) => {
       const item = createSnippetItem(snippet, index, onRemove, onSnippetClick);
       list.appendChild(item);
     });
+  }
+  
+  // Update title with search counter if search is active
+  const title = panel.querySelector('.ce-panel-title');
+  if (title && searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippets.length) {
+    title.textContent = `Collected Snippets (${snippets.length} of ${totalCount})`;
+  } else if (title) {
+    title.textContent = 'Collected Snippets';
   }
   
   // Update button states
