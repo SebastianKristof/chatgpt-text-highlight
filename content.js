@@ -1387,8 +1387,8 @@ function createSelectionToolbar(selection, range) {
   if (fab) {
     const fabRect = fab.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
-    toolbar.style.left = `${fabRect.left - containerRect.left - toolbar.offsetWidth - 12}px`;
-    toolbar.style.top = `${fabRect.top - containerRect.top}px`;
+    toolbar.style.top = `${fabRect.top - containerRect.top - toolbar.offsetHeight - 8}px`;
+    toolbar.style.left = `${fabRect.right - containerRect.left - toolbar.offsetWidth}px`;
   }
   
   // Animate in
@@ -1399,12 +1399,13 @@ function createSelectionToolbar(selection, range) {
 
 function hideSelectionToolbar() {
   if (selectionToolbar) {
-    selectionToolbar.classList.remove('ce-toolbar-show');
+    const toolbarToRemove = selectionToolbar;
+    selectionToolbar = null;
+    toolbarToRemove.classList.remove('ce-toolbar-show');
     setTimeout(() => {
-      if (selectionToolbar && selectionToolbar.parentNode) {
-        selectionToolbar.parentNode.removeChild(selectionToolbar);
+      if (toolbarToRemove && toolbarToRemove.parentNode) {
+        toolbarToRemove.parentNode.removeChild(toolbarToRemove);
       }
-      selectionToolbar = null;
     }, 200);
   }
 }
