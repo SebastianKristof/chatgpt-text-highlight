@@ -909,7 +909,7 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   });
   
   const removeBtn = document.createElement('button');
-  removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small';
+  removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small ce-btn-remove';
   removeBtn.setAttribute('aria-label', 'Remove snippet');
   removeBtn.innerHTML = '×';
   removeBtn.addEventListener('click', async (e) => {
@@ -945,12 +945,26 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
   return list;
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, onSearch, snippetCount, selectedCount, allSelected, searchQuery }) {
+function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, onSearch, onToggleTheme, currentTheme, snippetCount, selectedCount, allSelected, searchQuery }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
+  
+  // Title row with close icon
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-panel-title-row';
+  
   const title = document.createElement('h2');
   title.className = 'ce-panel-title';
   title.textContent = 'Collected Snippets';
+  
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ce-btn ce-btn-icon';
+  closeBtn.setAttribute('aria-label', 'Close panel');
+  closeBtn.innerHTML = '×';
+  closeBtn.addEventListener('click', onClose);
+  
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeBtn);
   
   // Search box
   const searchContainer = document.createElement('div');
@@ -984,8 +998,22 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, on
   searchWrapper.appendChild(clearSearchBtn);
   searchContainer.appendChild(searchWrapper);
   
+  // Actions row (without close button)
   const actions = document.createElement('div');
   actions.className = 'ce-panel-actions';
+  
+  // Theme toggle button
+  if (onToggleTheme && currentTheme) {
+    const themeIcons = { auto: '⚙', light: '☀', dark: '🌙' };
+    const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+    const themeBtn = document.createElement('button');
+    themeBtn.className = 'ce-btn ce-btn-icon ce-btn-theme';
+    themeBtn.innerHTML = themeIcons[currentTheme] || '⚙';
+    themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
+    themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
+    themeBtn.addEventListener('click', onToggleTheme);
+    actions.appendChild(themeBtn);
+  }
   
   const selectAllBtn = document.createElement('button');
   selectAllBtn.className = 'ce-btn';
@@ -1020,19 +1048,13 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, on
   manageBtn.textContent = 'Import/Export';
   manageBtn.setAttribute('aria-label', 'Import or export snippets');
   manageBtn.addEventListener('click', onManage);
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'ce-btn ce-btn-icon';
-  closeBtn.setAttribute('aria-label', 'Close panel');
-  closeBtn.innerHTML = '×';
-  closeBtn.addEventListener('click', onClose);
   
   actions.appendChild(selectAllBtn);
   actions.appendChild(copyBtn);
   actions.appendChild(clearBtn);
   actions.appendChild(manageBtn);
-  actions.appendChild(closeBtn);
-  header.appendChild(title);
+  
+  header.appendChild(titleRow);
   header.appendChild(searchContainer);
   header.appendChild(actions);
   return header;
@@ -1045,7 +1067,7 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, selectedIds, searchQuery }) {
+function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, onToggleTheme, currentTheme, selectedIds, searchQuery }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
@@ -1058,6 +1080,8 @@ function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetCl
     onManage,
     onSelectAll,
     onSearch,
+    onToggleTheme,
+    currentTheme,
     snippetCount: snippets.length, 
     selectedCount: selectedIds ? selectedIds.size : 0,
     allSelected,
@@ -1147,7 +1171,13 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
     
     const p = document.createElement('p');
     p.className = 'ce-modal-message';
-    p.textContent = message || '';
+    // Support multi-line messages with proper line breaks
+    if (message && message.includes('\n')) {
+      p.style.whiteSpace = 'pre-line';
+      p.textContent = message;
+    } else {
+      p.textContent = message || '';
+    }
     
     body.appendChild(h);
     body.appendChild(p);
@@ -1490,28 +1520,46 @@ function createSelectionToolbar(selection, range) {
   toolbar.appendChild(saveBtn);
   toolbar.appendChild(copyBtn);
   
+  // Append to body (toolbar needs to be outside container for proper positioning)
+  // But add class to inherit theme variables
+  const container = document.getElementById(CONTAINER_ID);
+  if (container) {
+    // Copy theme class from container to toolbar
+    const themeClass = Array.from(container.classList).find(cls => cls.startsWith('ce-theme-'));
+    if (themeClass) {
+      toolbar.classList.add(themeClass);
+    }
+  }
+  
   document.body.appendChild(toolbar);
   selectionToolbar = toolbar;
   
-  // Position relative to FAB
-  if (fab) {
+  // Position relative to FAB - always grow from FAB
+  // Use requestAnimationFrame to ensure layout is calculated
+  requestAnimationFrame(() => {
+    if (!fab) return;
+    
     const padding = 12;
-    const toolbarWidth = toolbar.offsetWidth;
-    const toolbarHeight = toolbar.offsetHeight;
+    const fabRect = fab.getBoundingClientRect();
+    
+    // Get toolbar dimensions after it's in the DOM
+    const toolbarWidth = toolbar.offsetWidth || 150; // fallback width
+    const toolbarHeight = toolbar.offsetHeight || 80; // fallback height
+    
+    // Position toolbar above FAB, aligned to the right
+    const desiredTop = fabRect.top - toolbarHeight - padding;
+    const desiredLeft = fabRect.right - toolbarWidth;
+    
+    // Ensure toolbar stays within viewport
     const headerBottom = getChatHeaderBottom();
     const safeTop = headerBottom + padding;
     const safeBottom = window.innerHeight - toolbarHeight - padding;
-    const selectionRect = range?.getBoundingClientRect?.();
-    let desiredTop = selectionRect?.top ? selectionRect.top - toolbarHeight - 8 : safeTop;
-    if (!Number.isFinite(desiredTop)) desiredTop = safeTop;
-    desiredTop = clamp(desiredTop, safeTop, safeBottom);
-    const desiredLeft = window.innerWidth - toolbarWidth - padding;
-    toolbar.style.left = `${desiredLeft}px`;
-    toolbar.style.top = `${desiredTop}px`;
-  }
-  
-  // Animate in
-  requestAnimationFrame(() => {
+    const clampedTop = clamp(desiredTop, safeTop, safeBottom);
+    
+    toolbar.style.left = `${Math.max(padding, desiredLeft)}px`;
+    toolbar.style.top = `${clampedTop}px`;
+    
+    // Animate in after positioning
     toolbar.classList.add('ce-toolbar-show');
   });
 }
@@ -1606,6 +1654,9 @@ let state = {
   selectedIds: new Set(),
   currentConversationId: null,
   searchQuery: '',
+  settings: {
+    theme: 'auto' // Default to auto (follows system)
+  },
   // When ChatGPT navigates to a new thread, it can take a moment for the URL to include the new conversationId.
   // We track the previous conversation so we can offer to copy snippets forward once the new ID exists.
   pendingTransferFromConversationId: null,
@@ -1954,9 +2005,83 @@ function scheduleBranchedFromTransferCheck() {
   }, 500);
 }
 
+/**
+ * Applies theme to the extension UI.
+ * @param {string} theme - Theme mode: 'light', 'dark', or 'auto'
+ */
+function applyTheme(theme) {
+  if (!container) return;
+  
+  container.classList.remove('ce-theme-light', 'ce-theme-dark');
+  
+  if (theme === 'auto') {
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    container.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
+  } else {
+    container.classList.add(`ce-theme-${theme}`);
+  }
+  
+  // Update panel theme class if panel exists
+  if (panel) {
+    panel.classList.remove('ce-theme-light', 'ce-theme-dark');
+    if (theme === 'auto') {
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      panel.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
+    } else {
+      panel.classList.add(`ce-theme-${theme}`);
+    }
+  }
+}
+
+/**
+ * Gets current theme setting.
+ * @returns {string} Current theme
+ */
+function getCurrentTheme() {
+  return state.settings.theme || 'auto';
+}
+
+/**
+ * Handles theme toggle.
+ */
+async function handleToggleTheme() {
+  const currentTheme = getCurrentTheme();
+  let nextTheme;
+  
+  // Cycle through: auto -> light -> dark -> auto
+  if (currentTheme === 'auto') {
+    nextTheme = 'light';
+  } else if (currentTheme === 'light') {
+    nextTheme = 'dark';
+  } else {
+    nextTheme = 'auto';
+  }
+  
+  state.settings.theme = nextTheme;
+  applyTheme(nextTheme);
+  await persistState();
+  updateUI();
+  
+  const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+  createToast(`Theme: ${themeLabels[nextTheme]}`);
+}
+
 async function init() {
   container = createContainer();
   await loadState();
+  
+  // Apply theme
+  applyTheme(state.settings.theme || 'auto');
+  
+  // Listen to system theme changes for auto mode
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      if (state.settings.theme === 'auto') {
+        applyTheme('auto');
+      }
+    });
+  }
+  
   state.currentConversationId = getConversationId();
   renderUI();
   setupEventListeners();
@@ -2199,6 +2324,12 @@ async function loadState() {
   try {
     const items = await loadSnippets();
     state.items = items;
+    
+    // Load settings
+    const settingsResult = await chrome.storage.local.get('settings');
+    if (settingsResult.settings) {
+      state.settings = { ...state.settings, ...settingsResult.settings };
+    }
   } catch (error) {
     console.error('Failed to load state:', error);
     createToast('Failed to load snippets');
@@ -2208,6 +2339,8 @@ async function loadState() {
 async function persistState() {
   try {
     await saveSnippets(state.items);
+    // Save settings separately
+    await chrome.storage.local.set({ settings: state.settings });
   } catch (error) {
     console.error('Failed to save state:', error);
     createToast('Failed to save snippets');
@@ -2257,9 +2390,25 @@ function renderUI() {
     onSelectAll: handleSelectAll,
     onSearch: handleSearch,
     onManage: handleOpenImportExport,
+    onToggleTheme: handleToggleTheme,
+    currentTheme: getCurrentTheme(),
     selectedIds: state.selectedIds,
     searchQuery: state.searchQuery
   });
+  
+  // Apply theme class to panel so it inherits CSS variables
+  if (container) {
+    const themeClass = Array.from(container.classList).find(cls => cls.startsWith('ce-theme-'));
+    if (themeClass) {
+      panel.classList.add(themeClass);
+    } else {
+      // Default to light theme if no theme class found
+      panel.classList.add('ce-theme-light');
+    }
+  } else {
+    panel.classList.add('ce-theme-light');
+  }
+  
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   document.body.appendChild(panel);
   positionPanel(panel);
@@ -2292,6 +2441,26 @@ function updateUI() {
     updateFABCount(fab, totalSnippets.length);
   }
   if (panel) {
+    // Update theme class on panel
+    const currentTheme = getCurrentTheme();
+    panel.classList.remove('ce-theme-light', 'ce-theme-dark');
+    if (currentTheme === 'auto') {
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      panel.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
+    } else {
+      panel.classList.add(`ce-theme-${currentTheme}`);
+    }
+    
+    // Update theme button icon if it exists
+    const themeBtn = panel.querySelector('.ce-btn-theme');
+    if (themeBtn) {
+      const themeIcons = { auto: '⚙', light: '☀', dark: '🌙' };
+      const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+      themeBtn.innerHTML = themeIcons[currentTheme] || '⚙';
+      themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
+      themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
+    }
+    
     updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery);
   }
 }
@@ -2377,9 +2546,18 @@ function addSnippet(snippet) {
 }
 
 async function handleRemove(id) {
+  // Find the snippet to show preview
+  const snippet = state.items.find(item => item.id === id);
+  if (!snippet) return;
+  
+  // Get first two lines of snippet text
+  const lines = snippet.text.split('\n').filter(line => line.trim());
+  const preview = lines.slice(0, 2).join('\n');
+  const previewText = preview.length > 100 ? preview.substring(0, 100) + '...' : preview;
+  
   const ok = await showConfirmModal({
     title: 'Remove snippet?',
-    message: 'This will remove it from your collected list. You can’t undo this.',
+    message: previewText ? `Remove this snippet?\n\n"${previewText}"\n\nThis will remove it from your collected list. You cannot undo this.` : 'This will remove it from your collected list. You cannot undo this.',
     confirmText: 'Remove',
     cancelText: 'Cancel',
     danger: true

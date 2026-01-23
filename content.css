@@ -4,7 +4,9 @@
  */
 
 /* CSS Variables - Light Theme (Default) */
-#ce-root {
+:root,
+#ce-root,
+.ce-theme-light {
   --ce-bg-primary: #ffffff;
   --ce-bg-secondary: #f5f5f5;
   --ce-bg-tertiary: #f0f0f0;
@@ -24,7 +26,9 @@
 }
 
 /* Dark Theme */
-#ce-root.ce-theme-dark {
+:root.ce-theme-dark,
+#ce-root.ce-theme-dark,
+.ce-theme-dark {
   --ce-bg-primary: #1a1a1a;
   --ce-bg-secondary: #2a2a2a;
   --ce-bg-tertiary: #333333;
@@ -55,6 +59,9 @@
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent invisible clickable area - container should only be as large as its content */
+  width: fit-content;
+  height: fit-content;
 }
 
 /* Floating Action Button */
@@ -126,25 +133,31 @@
   width: 420px;
   max-width: calc(100vw - 120px);
   max-height: var(--ce-panel-max-height, calc(100vh - 48px));
-  background: var(--ce-bg-primary);
+  background: var(--ce-bg-primary, #ffffff);
   border-radius: 16px;
-  box-shadow: var(--ce-shadow-lg);
-  border: 1px solid var(--ce-border-color);
+  box-shadow: var(--ce-shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.08), 0 16px 64px rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--ce-border-color, rgba(0, 0, 0, 0.06));
   display: flex;
   flex-direction: column;
   opacity: 0;
+  visibility: hidden;
   transform: translateX(8px) scale(0.96);
   pointer-events: none;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
-  backdrop-filter: blur(20px);
-  z-index: 2147483646;
+  z-index: 1000000;
 }
 
 .ce-panel-open {
   opacity: 1;
   transform: translateX(0) scale(1);
   pointer-events: auto;
+  visibility: visible;
+}
+
+/* Ensure panel is not clickable when closed */
+.ce-panel:not(.ce-panel-open) {
+  pointer-events: none !important;
 }
 
 /* Panel Header */
@@ -443,6 +456,25 @@
   font-size: 14px;
 }
 
+.ce-btn-remove {
+  color: #dc2626;
+}
+
+.ce-btn-remove:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}
+
+/* Dark theme support for remove button */
+.ce-theme-dark .ce-btn-remove {
+  color: #f87171;
+}
+
+.ce-theme-dark .ce-btn-remove:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.15);
+  color: #fca5a5;
+}
+
 /* Panel Footer */
 .ce-panel-footer {
   padding: 16px 24px;
@@ -465,11 +497,11 @@
   border: 1px solid var(--ce-border-color);
   border-radius: 12px;
   box-shadow: var(--ce-shadow-lg);
-  pointer-events: auto;
+  pointer-events: none;
   opacity: 0;
   transform: translateY(6px);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 2147483647;
+  z-index: 1000001;
   align-items: stretch;
   backdrop-filter: blur(20px);
 }
@@ -477,6 +509,7 @@
 .ce-selection-toolbar.ce-toolbar-show {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 .ce-toolbar-btn {
