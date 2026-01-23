@@ -927,9 +927,17 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   return item;
 }
 
+// Virtualization state
+let virtualizationState = {
+  itemHeight: 120, // Estimated height per item (will be measured)
+  buffer: 3, // Number of items to render outside viewport
+  measuredHeight: null
+};
+
 function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds }) {
   const list = document.createElement('div');
   list.className = 'ce-snippet-list';
+  
   if (snippets.length === 0) {
     const emptyState = document.createElement('div');
     emptyState.className = 'ce-empty-state';
@@ -937,15 +945,142 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
     list.appendChild(emptyState);
     return list;
   }
-  snippets.forEach((snippet, index) => {
-    const isSelected = selectedIds && selectedIds.has(snippet.id);
-    const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, isSelected);
-    list.appendChild(item);
+  
+  // Store snippets data for virtualization
+  list._snippets = snippets;
+  list._onRemove = onRemove;
+  list._onSnippetClick = onSnippetClick;
+  list._onCopySnippet = onCopySnippet;
+  list._onToggleSelect = onToggleSelect;
+  list._selectedIds = selectedIds;
+  
+  // Virtualization container
+  const virtualContainer = document.createElement('div');
+  virtualContainer.className = 'ce-virtual-container';
+  list.appendChild(virtualContainer);
+  
+  // Initial render
+  updateVirtualizedList(list);
+  
+  // Throttled scroll handler
+  let scrollTimeout;
+  list.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      updateVirtualizedList(list);
+    }, 10);
   });
+  
+  // Resize observer for window resize
+  if (window.ResizeObserver) {
+    const resizeObserver = new ResizeObserver(() => {
+      updateVirtualizedList(list);
+    });
+    resizeObserver.observe(list);
+  }
+  
   return list;
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, onSearch, onToggleTheme, currentTheme, snippetCount, selectedCount, allSelected, searchQuery }) {
+function updateVirtualizedList(list) {
+  const snippets = list._snippets;
+  if (!snippets || snippets.length === 0) return;
+  
+  const container = list.querySelector('.ce-virtual-container');
+  if (!container) return;
+  
+  const containerHeight = list.clientHeight || list.offsetHeight;
+  const scrollTop = list.scrollTop || 0;
+  
+  // If container height is 0, render all items (not yet measured)
+  if (containerHeight === 0) {
+    container.innerHTML = '';
+    snippets.forEach((snippet, index) => {
+      const isSelected = list._selectedIds && list._selectedIds.has(snippet.id);
+      const item = createSnippetItem(
+        snippet,
+        index,
+        list._onRemove,
+        list._onSnippetClick,
+        list._onCopySnippet,
+        list._onToggleSelect,
+        isSelected
+      );
+      container.appendChild(item);
+    });
+    // Measure height after render
+    requestAnimationFrame(() => {
+      if (container.children.length > 0) {
+        const firstItem = container.children[0];
+        if (firstItem && firstItem.offsetHeight) {
+          virtualizationState.measuredHeight = firstItem.offsetHeight;
+          virtualizationState.itemHeight = firstItem.offsetHeight;
+          // Re-render with virtualization
+          updateVirtualizedList(list);
+        }
+      }
+    });
+    return;
+  }
+  
+  // Measure item height on first render if not measured
+  if (!virtualizationState.measuredHeight && container.children.length > 0) {
+    const firstItem = container.querySelector('.ce-snippet-item');
+    if (firstItem && firstItem.offsetHeight) {
+      virtualizationState.measuredHeight = firstItem.offsetHeight;
+      virtualizationState.itemHeight = firstItem.offsetHeight;
+    }
+  }
+  
+  const itemHeight = virtualizationState.measuredHeight || virtualizationState.itemHeight;
+  const buffer = virtualizationState.buffer;
+  
+  // Calculate visible range
+  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - buffer);
+  const endIndex = Math.min(
+    snippets.length - 1,
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + buffer
+  );
+  
+  // Store current range
+  list._startIndex = startIndex;
+  list._endIndex = endIndex;
+  
+  // Clear container
+  container.innerHTML = '';
+  
+  // Add top spacer
+  const topSpacer = document.createElement('div');
+  topSpacer.className = 'ce-virtual-spacer';
+  topSpacer.style.height = `${startIndex * itemHeight}px`;
+  container.appendChild(topSpacer);
+  
+  // Render visible items
+  for (let i = startIndex; i <= endIndex; i++) {
+    const snippet = snippets[i];
+    if (!snippet) continue;
+    
+    const isSelected = list._selectedIds && list._selectedIds.has(snippet.id);
+    const item = createSnippetItem(
+      snippet,
+      i,
+      list._onRemove,
+      list._onSnippetClick,
+      list._onCopySnippet,
+      list._onToggleSelect,
+      isSelected
+    );
+    container.appendChild(item);
+  }
+  
+  // Add bottom spacer
+  const bottomSpacer = document.createElement('div');
+  bottomSpacer.className = 'ce-virtual-spacer';
+  bottomSpacer.style.height = `${(snippets.length - endIndex - 1) * itemHeight}px`;
+  container.appendChild(bottomSpacer);
+}
+
+function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, onSearch, onToggleTheme, onSortToggle, currentTheme, snippetCount, selectedCount, allSelected, searchQuery, totalCount, sortOrder }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   
@@ -1004,11 +1139,11 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, on
   
   // Theme toggle button
   if (onToggleTheme && currentTheme) {
-    const themeIcons = { auto: '⚙', light: '☀', dark: '🌙' };
+    const themeIcons = { auto: '🌓', light: '☀', dark: '🌙' };
     const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
     const themeBtn = document.createElement('button');
     themeBtn.className = 'ce-btn ce-btn-icon ce-btn-theme';
-    themeBtn.innerHTML = themeIcons[currentTheme] || '⚙';
+    themeBtn.innerHTML = themeIcons[currentTheme] || '🌓';
     themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
     themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
     themeBtn.addEventListener('click', onToggleTheme);
@@ -1016,7 +1151,7 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, on
   }
   
   const selectAllBtn = document.createElement('button');
-  selectAllBtn.className = 'ce-btn';
+  selectAllBtn.className = 'ce-btn ce-btn-select-all';
   selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
   selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
   selectAllBtn.addEventListener('click', onSelectAll);
@@ -1054,9 +1189,39 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, on
   actions.appendChild(clearBtn);
   actions.appendChild(manageBtn);
   
+  // Sort and counter row (under actions)
+  const sortCounterRow = document.createElement('div');
+  sortCounterRow.className = 'ce-panel-sort-counter-row';
+  
+  // Search counter (always show, format depends on search state)
+  const counterContainer = document.createElement('div');
+  counterContainer.className = 'ce-search-counter';
+  if (searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippetCount) {
+    counterContainer.textContent = `${snippetCount} / ${totalCount}`;
+  } else {
+    counterContainer.textContent = totalCount !== undefined ? `${totalCount}` : `${snippetCount}`;
+  }
+  counterContainer.style.display = 'block';
+  
+  // Sort button
+  const sortBtn = document.createElement('button');
+  sortBtn.className = 'ce-btn ce-btn-icon ce-btn-sort';
+  sortBtn.innerHTML = sortOrder === 'desc' ? '↓' : '↑';
+  sortBtn.setAttribute('aria-label', `Sort: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`);
+  sortBtn.title = `Sort: ${sortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'}`;
+  sortBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onSortToggle) onSortToggle();
+  };
+  
+  sortCounterRow.appendChild(counterContainer);
+  sortCounterRow.appendChild(sortBtn);
+  
   header.appendChild(titleRow);
   header.appendChild(searchContainer);
   header.appendChild(actions);
+  header.appendChild(sortCounterRow);
   return header;
 }
 
@@ -1067,7 +1232,7 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, onToggleTheme, currentTheme, selectedIds, searchQuery }) {
+function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, onToggleTheme, onSortToggle, currentTheme, selectedIds, searchQuery, totalCount, sortOrder }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
@@ -1081,17 +1246,28 @@ function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetCl
     onSelectAll,
     onSearch,
     onToggleTheme,
+    onSortToggle,
     currentTheme,
     snippetCount: snippets.length, 
     selectedCount: selectedIds ? selectedIds.size : 0,
     allSelected,
-    searchQuery
+    searchQuery,
+    totalCount,
+    sortOrder
   });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds });
   const footer = createPanelFooter();
   panel.appendChild(header);
   panel.appendChild(list);
   panel.appendChild(footer);
+  
+  // Update virtualization after list is in DOM (for proper height measurement)
+  if (list._snippets && list._snippets.length > 0) {
+    requestAnimationFrame(() => {
+      updateVirtualizedList(list);
+    });
+  }
+  
   return panel;
 }
 
@@ -1585,11 +1761,12 @@ function updateFABCount(fab, count) {
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery, totalCount, sortOrder, onSortToggle) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
-  list.innerHTML = '';
+  
   if (snippets.length === 0) {
+    list.innerHTML = '';
     const emptyState = document.createElement('div');
     emptyState.className = 'ce-empty-state';
     if (searchQuery && searchQuery.trim()) {
@@ -1599,10 +1776,17 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     }
     list.appendChild(emptyState);
   } else {
-    snippets.forEach((snippet, index) => {
-      const isSelected = selectedIds && selectedIds.has(snippet.id);
-      const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, isSelected);
-      list.appendChild(item);
+    // Update virtualization data
+    list._snippets = snippets;
+    list._onRemove = onRemove;
+    list._onSnippetClick = onSnippetClick;
+    list._onCopySnippet = onCopySnippet;
+    list._onToggleSelect = onToggleSelect;
+    list._selectedIds = selectedIds;
+    
+    // Update virtualized list (use requestAnimationFrame to ensure DOM is ready)
+    requestAnimationFrame(() => {
+      updateVirtualizedList(list);
     });
   }
   
@@ -1616,8 +1800,31 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
   }
   
+  // Update search counter and sort button
+  const counterContainer = panel.querySelector('.ce-search-counter');
+  const sortBtn = panel.querySelector('.ce-btn-sort');
+  if (counterContainer) {
+    if (searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippets.length) {
+      counterContainer.textContent = `${snippets.length} / ${totalCount}`;
+    } else {
+      counterContainer.textContent = totalCount !== undefined ? `${totalCount}` : `${snippets.length}`;
+    }
+    counterContainer.style.display = 'block';
+  }
+  if (sortBtn && sortOrder) {
+    sortBtn.innerHTML = sortOrder === 'desc' ? '↓' : '↑';
+    sortBtn.setAttribute('aria-label', `Sort: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`);
+    sortBtn.title = `Sort: ${sortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'}`;
+    // Update click handler - use onclick for reliable binding
+    sortBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onSortToggle();
+    };
+  }
+  
   // Update header buttons
-  const selectAllBtn = panel.querySelector('.ce-btn:not(.ce-btn-secondary):not(.ce-btn-icon)');
+  const selectAllBtn = panel.querySelector('.ce-btn-select-all');
   const copyBtn = panel.querySelector('.ce-btn-copy');
   const clearBtn = panel.querySelector('.ce-btn-clear');
   
@@ -1626,8 +1833,12 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
     selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
     selectAllBtn.disabled = snippets.length === 0;
-    // Update click handler
-    selectAllBtn.onclick = onSelectAll;
+    // Update click handler - use onclick for reliable binding
+    selectAllBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onSelectAll();
+    };
   }
   
   if (copyBtn) {
@@ -1654,6 +1865,7 @@ let state = {
   selectedIds: new Set(),
   currentConversationId: null,
   searchQuery: '',
+  sortOrder: 'desc', // 'desc' for newest first, 'asc' for oldest first
   settings: {
     theme: 'auto' // Default to auto (follows system)
   },
@@ -2142,6 +2354,13 @@ function getCurrentConversationSnippets() {
     );
   }
   
+  // Sort by timestamp
+  snippets.sort((a, b) => {
+    const aTime = a.timestamp || 0;
+    const bTime = b.timestamp || 0;
+    return state.sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
+  });
+  
   return snippets;
 }
 
@@ -2391,9 +2610,12 @@ function renderUI() {
     onSearch: handleSearch,
     onManage: handleOpenImportExport,
     onToggleTheme: handleToggleTheme,
+    onSortToggle: handleSortToggle,
     currentTheme: getCurrentTheme(),
     selectedIds: state.selectedIds,
-    searchQuery: state.searchQuery
+    searchQuery: state.searchQuery,
+    totalCount: totalSnippets.length,
+    sortOrder: state.sortOrder
   });
   
   // Apply theme class to panel so it inherits CSS variables
@@ -2454,14 +2676,14 @@ function updateUI() {
     // Update theme button icon if it exists
     const themeBtn = panel.querySelector('.ce-btn-theme');
     if (themeBtn) {
-      const themeIcons = { auto: '⚙', light: '☀', dark: '🌙' };
+      const themeIcons = { auto: '🌓', light: '☀', dark: '🌙' };
       const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
-      themeBtn.innerHTML = themeIcons[currentTheme] || '⚙';
+      themeBtn.innerHTML = themeIcons[currentTheme] || '🌓';
       themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
       themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
     }
     
-    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery);
+    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery, totalSnippets.length, state.sortOrder, handleSortToggle);
   }
 }
 
@@ -2598,6 +2820,19 @@ async function handleClear() {
   createToast(`Cleared ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
 }
 
+function showCopyIndicator(button, originalText) {
+  if (!button) return;
+  
+  button.classList.add('ce-btn-copied');
+  const originalContent = button.innerHTML;
+  button.innerHTML = '✓ ' + (originalText || 'Copied');
+  
+  setTimeout(() => {
+    button.classList.remove('ce-btn-copied');
+    button.innerHTML = originalContent;
+  }, 2500);
+}
+
 async function handleCopy() {
   // Get visible (filtered) snippets
   const visibleSnippets = getCurrentConversationSnippets();
@@ -2640,6 +2875,15 @@ async function handleCopy() {
     await navigator.clipboard.writeText(finalMarkdown);
     const count = snippetsToCopy.length;
     createToast(`Copied ${count} snippet${count !== 1 ? 's' : ''} to clipboard`);
+    
+    // Show indicator on Copy All button
+    if (panel) {
+      const copyBtn = panel.querySelector('.ce-btn-copy');
+      if (copyBtn) {
+        const originalText = copyBtn.textContent;
+        showCopyIndicator(copyBtn, originalText);
+      }
+    }
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
@@ -2796,12 +3040,29 @@ function handleSearch(query) {
   updateUI();
 }
 
+function handleSortToggle() {
+  state.sortOrder = state.sortOrder === 'desc' ? 'asc' : 'desc';
+  updateUI();
+}
+
 async function handleCopySnippet(snippet) {
   try {
     // Clean up the snippet's markdown
     const cleaned = cleanupMarkdown(snippet.text);
     await navigator.clipboard.writeText(cleaned);
     createToast('Copied to clipboard');
+    
+    // Show indicator on snippet's copy button
+    if (panel) {
+      const snippetItem = panel.querySelector(`[data-snippet-id="${snippet.id}"]`);
+      if (snippetItem) {
+        const copyBtn = snippetItem.querySelector('.ce-btn-copy');
+        if (copyBtn) {
+          const originalContent = copyBtn.innerHTML;
+          showCopyIndicator(copyBtn, '');
+        }
+      }
+    }
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
