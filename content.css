@@ -127,10 +127,11 @@
 
 /* Minimized FAB mode */
 .ce-fab-minimized {
-  padding: 10px 16px;
+  padding: 8px 12px;
   border-radius: 20px;
   min-width: auto;
   width: auto;
+  justify-content: center;
 }
 
 .ce-fab-minimized .ce-fab-text {
@@ -142,25 +143,27 @@
   min-width: auto;
   padding: 0;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .ce-fab-chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   padding: 0;
-  margin: 0 4px;
+  margin: 0 2px 0 0;
   border: none;
   background: transparent;
   color: var(--ce-text-primary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
   border-radius: 4px;
   transition: all 0.15s ease;
-  opacity: 0.7;
+  opacity: 0.6;
+  flex-shrink: 0;
 }
 
 .ce-fab-chevron:hover {
@@ -673,6 +676,21 @@
   pointer-events: auto;
 }
 
+/* Minimized toolbar - compact, icon-only */
+.ce-toolbar-minimized {
+  padding: 6px;
+  gap: 4px;
+  min-width: auto;
+  width: auto;
+}
+
+.ce-toolbar-minimized .ce-toolbar-btn {
+  min-width: auto;
+  width: 32px;
+  padding: 6px;
+  justify-content: center;
+}
+
 .ce-toolbar-btn {
   display: flex;
   align-items: center;
@@ -718,6 +736,10 @@
 
 .ce-toolbar-minimized .ce-toolbar-label {
   display: none;
+}
+
+.ce-toolbar-minimized .ce-toolbar-icon {
+  font-size: 16px;
 }
 
 /* Toast */

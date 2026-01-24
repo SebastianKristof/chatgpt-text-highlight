@@ -881,47 +881,78 @@ function createFAB(count, onClick, onToggleMinimized) {
   fab.className = isMinimized ? 'ce-fab ce-fab-minimized' : 'ce-fab';
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
   
-  // Create chevron toggle button
-  const chevronBtn = document.createElement('button');
+  // Create chevron as a span (not a button to avoid nested button issues)
+  const chevronBtn = document.createElement('span');
   chevronBtn.className = 'ce-fab-chevron';
-  chevronBtn.textContent = isMinimized ? '›' : '‹';
-  chevronBtn.setAttribute('aria-label', isMinimized ? 'Expand' : 'Minimize');
-  chevronBtn.title = isMinimized ? 'Expand' : 'Minimize';
-  chevronBtn.addEventListener('click', (e) => {
+  chevronBtn.setAttribute('role', 'button');
+  chevronBtn.setAttribute('tabindex', '0');
+  if (isMinimized) {
+    chevronBtn.textContent = '‹';
+    chevronBtn.setAttribute('aria-label', 'Expand');
+    chevronBtn.title = 'Expand';
+  } else {
+    chevronBtn.textContent = '›';
+    chevronBtn.setAttribute('aria-label', 'Minimize');
+    chevronBtn.title = 'Minimize';
+  }
+  
+  // Chevron click handler - always toggles minimize/maximize
+  // Use mousedown to intercept before the FAB's click handler
+  chevronBtn.addEventListener('mousedown', async (e) => {
     e.stopPropagation();
     e.preventDefault();
+    // Reset drag state to prevent the FAB from "running away"
+    fabDragState.active = false;
+    fabDragState.longPressReady = false;
+    fabDragState.moved = false;
+    if (fabDragState.longPressTimer) {
+      clearTimeout(fabDragState.longPressTimer);
+      fabDragState.longPressTimer = null;
+    }
     if (onToggleMinimized) {
-      onToggleMinimized();
+      await onToggleMinimized();
+    }
+  });
+  
+  // Also handle keyboard for accessibility
+  chevronBtn.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.stopPropagation();
+      e.preventDefault();
+      if (onToggleMinimized) {
+        await onToggleMinimized();
+      }
     }
   });
   
   if (isMinimized) {
-    // Minimized mode: count only, round pill
+    // Minimized mode: chevron (pointing left to expand) + count
     fab.innerHTML = `
       <span class="ce-fab-count">${count}</span>
     `;
     if (count === 0) {
-      // If count is 0, make semi-transparent (unless explicitly in minimized mode, but still show it)
+      // If count is 0, make semi-transparent
       fab.style.opacity = '0.5';
     } else {
       fab.style.opacity = '';
     }
     fab.title = 'Collected snippets';
-    // Prepend chevron
+    // Insert chevron at the beginning (left side)
     fab.insertBefore(chevronBtn, fab.firstChild);
   } else {
-    // Full mode: text + count
+    // Full mode: chevron on left (pointing right to minimize) + text + count
     fab.innerHTML = `
       <span class="ce-fab-text">Collected</span>
       <span class="ce-fab-count">${count}</span>
     `;
-    // Append chevron
-    fab.appendChild(chevronBtn);
+    // Insert chevron at the beginning (left side)
+    fab.insertBefore(chevronBtn, fab.firstChild);
   }
   
   fab.addEventListener('click', (e) => {
     // Don't toggle panel if clicking chevron
     if (e.target === chevronBtn || chevronBtn.contains(e.target)) {
+      e.preventDefault();
       return;
     }
     if (fabDragState.moved) {
@@ -929,6 +960,7 @@ function createFAB(count, onClick, onToggleMinimized) {
       e.preventDefault();
       return;
     }
+    // Clicking the rest of the FAB opens the panel
     onClick(e);
   });
   enableFabDragging(fab);
