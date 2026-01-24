@@ -1814,7 +1814,7 @@ function updateFABCount(fab, count) {
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery, totalCount, sortOrder, onSortToggle, onClearSelected) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery, totalCount, sortOrder, onSortToggle, onClearSelected, onToggleTheme) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   
@@ -1829,6 +1829,34 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     }
     list.appendChild(emptyState);
   } else {
+    // Clear any empty state
+    list.innerHTML = '';
+    
+    // Ensure virtual container exists (it might not exist if we transitioned from empty state)
+    let container = list.querySelector('.ce-virtual-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'ce-virtual-container';
+      list.appendChild(container);
+      
+      // Re-attach scroll handler if it was lost
+      let scrollTimeout;
+      list.addEventListener('scroll', () => {
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+          updateVirtualizedList(list);
+        }, 10);
+      });
+      
+      // Re-attach resize observer if it was lost
+      if (window.ResizeObserver) {
+        const resizeObserver = new ResizeObserver(() => {
+          updateVirtualizedList(list);
+        });
+        resizeObserver.observe(list);
+      }
+    }
+    
     // Update virtualization data
     list._snippets = snippets;
     list._onRemove = onRemove;
@@ -2756,7 +2784,7 @@ function updateUI() {
       themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
     }
     
-    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery, totalSnippets.length, state.sortOrder, handleSortToggle, handleClearSelected);
+    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery, totalSnippets.length, state.sortOrder, handleSortToggle, handleClearSelected, handleToggleTheme);
   }
 }
 
