@@ -971,7 +971,7 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
 // Virtualization state
 let virtualizationState = {
   itemHeight: 120, // Estimated height per item (will be measured)
-  buffer: 3, // Number of items to render outside viewport
+  buffer: 5, // Number of items to render outside viewport
   measuredHeight: null
 };
 
@@ -1083,10 +1083,43 @@ function updateVirtualizedList(list) {
     Math.ceil((scrollTop + containerHeight) / itemHeight) + buffer
   );
   
+  // Store previous range to detect changes
+  const prevStartIndex = list._startIndex ?? startIndex;
+  const prevEndIndex = list._endIndex ?? endIndex;
+  
+  // Only update if range actually changed
+  const rangeChanged = prevStartIndex !== startIndex || prevEndIndex !== endIndex;
+  
   // Store current range
   list._startIndex = startIndex;
   list._endIndex = endIndex;
   
+  // If range hasn't changed and items exist, skip update to preserve hover states
+  if (!rangeChanged && container.children.length > 0) {
+    // Still need to update selection states for existing items
+    const existingItems = container.querySelectorAll('.ce-snippet-item');
+    existingItems.forEach((item, idx) => {
+      const actualIndex = startIndex + idx;
+      if (actualIndex >= startIndex && actualIndex <= endIndex) {
+        const snippet = snippets[actualIndex];
+        if (snippet) {
+          const isSelected = list._selectedIds && list._selectedIds.has(snippet.id);
+          const checkbox = item.querySelector('.ce-snippet-checkbox');
+          if (checkbox) {
+            checkbox.checked = isSelected || false;
+          }
+          if (isSelected) {
+            item.classList.add('ce-snippet-selected');
+          } else {
+            item.classList.remove('ce-snippet-selected');
+          }
+        }
+      }
+    });
+    return;
+  }
+  
+  // Range changed or initial render - rebuild
   // Clear container
   container.innerHTML = '';
   
