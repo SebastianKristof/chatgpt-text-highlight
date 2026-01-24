@@ -441,7 +441,7 @@ function navigateToSource(snippet, options = {}) {
       anchor.conversationId &&
       (!currentConversationId || currentConversationId !== anchor.conversationId)
     ) {
-      let conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
+      let conversationUrl = `${window.location.origin}/c/${anchor.conversationId}`;
       try {
         const url = new URL(conversationUrl);
         if (snippet.id) {
@@ -875,15 +875,55 @@ function formatTimestamp(date) {
   return formatted;
 }
 
-function createFAB(count, onClick) {
+function createFAB(count, onClick, onToggleMinimized) {
   const fab = document.createElement('button');
-  fab.className = 'ce-fab';
+  const isMinimized = state.settings.minimizedMode || false;
+  fab.className = isMinimized ? 'ce-fab ce-fab-minimized' : 'ce-fab';
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
-  fab.innerHTML = `
-    <span class="ce-fab-text">Collected</span>
-    <span class="ce-fab-count">${count}</span>
-  `;
+  
+  // Create chevron toggle button
+  const chevronBtn = document.createElement('button');
+  chevronBtn.className = 'ce-fab-chevron';
+  chevronBtn.textContent = isMinimized ? '›' : '‹';
+  chevronBtn.setAttribute('aria-label', isMinimized ? 'Expand' : 'Minimize');
+  chevronBtn.title = isMinimized ? 'Expand' : 'Minimize';
+  chevronBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (onToggleMinimized) {
+      onToggleMinimized();
+    }
+  });
+  
+  if (isMinimized) {
+    // Minimized mode: count only, round pill
+    fab.innerHTML = `
+      <span class="ce-fab-count">${count}</span>
+    `;
+    if (count === 0) {
+      // If count is 0, make semi-transparent (unless explicitly in minimized mode, but still show it)
+      fab.style.opacity = '0.5';
+    } else {
+      fab.style.opacity = '';
+    }
+    fab.title = 'Collected snippets';
+    // Prepend chevron
+    fab.insertBefore(chevronBtn, fab.firstChild);
+  } else {
+    // Full mode: text + count
+    fab.innerHTML = `
+      <span class="ce-fab-text">Collected</span>
+      <span class="ce-fab-count">${count}</span>
+    `;
+    // Append chevron
+    fab.appendChild(chevronBtn);
+  }
+  
   fab.addEventListener('click', (e) => {
+    // Don't toggle panel if clicking chevron
+    if (e.target === chevronBtn || chevronBtn.contains(e.target)) {
+      return;
+    }
     if (fabDragState.moved) {
       fabDragState.moved = false;
       e.preventDefault();
@@ -1562,6 +1602,138 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
   });
 }
 
+async function showBranchCopyPrompt(fromConversationId, toConversationId, snippetCount) {
+  return new Promise((resolve) => {
+    // Check if user has set "Don't ask again" preference
+    const preferenceKey = `autoCopyOnBranch_${fromConversationId}->${toConversationId}`;
+    chrome.storage.local.get([preferenceKey, 'autoCopyOnBranch']).then((result) => {
+      const dontAskAgain = result[preferenceKey] || result.autoCopyOnBranch;
+      if (dontAskAgain) {
+        // User said don't ask again, auto-copy
+        resolve(true);
+        return;
+      }
+      
+      // Show modal with checkbox
+      if (activeModalOverlay) {
+        closeActiveModal(false);
+      }
+      let resolveCalled = false;
+      const modalResolve = (value) => {
+        if (resolveCalled) return;
+        resolveCalled = true;
+        resolve(value);
+      };
+      activeModalResolve = modalResolve;
+      
+      const overlay = document.createElement('div');
+      overlay.className = 'ce-modal-overlay';
+      overlay.setAttribute('role', 'presentation');
+      
+      const modal = document.createElement('div');
+      modal.className = 'ce-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.setAttribute('aria-label', 'Copy snippets from parent thread?');
+      
+      const body = document.createElement('div');
+      body.className = 'ce-modal-body';
+      
+      const h = document.createElement('h3');
+      h.className = 'ce-modal-title';
+      h.textContent = 'Copy snippets from parent thread?';
+      
+      const p = document.createElement('p');
+      p.className = 'ce-modal-message';
+      p.textContent = `Copy ${snippetCount} snippet${snippetCount !== 1 ? 's' : ''} from the parent thread to this conversation?`;
+      
+      const checkboxWrapper = document.createElement('label');
+      checkboxWrapper.className = 'ce-modal-checkbox-wrapper';
+      checkboxWrapper.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-top: 16px; cursor: pointer;';
+      
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.id = 'ce-branch-copy-dont-ask';
+      
+      const checkboxLabel = document.createElement('span');
+      checkboxLabel.textContent = "Don't ask again";
+      checkboxLabel.style.cssText = 'font-size: 14px; color: var(--ce-text-secondary, #8a8a8a);';
+      
+      checkboxWrapper.appendChild(checkbox);
+      checkboxWrapper.appendChild(checkboxLabel);
+      
+      body.appendChild(h);
+      body.appendChild(p);
+      body.appendChild(checkboxWrapper);
+      
+      const actions = document.createElement('div');
+      actions.className = 'ce-modal-actions';
+      
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'ce-btn';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', () => {
+        closeActiveModal(false);
+        modalResolve(false);
+      });
+      
+      const confirmBtn = document.createElement('button');
+      confirmBtn.className = 'ce-btn ce-btn-secondary';
+      confirmBtn.textContent = 'Copy';
+      confirmBtn.addEventListener('click', async () => {
+        const dontAsk = checkbox.checked;
+        if (dontAsk) {
+          // Store preference
+          const prefKey = `autoCopyOnBranch_${fromConversationId}->${toConversationId}`;
+          await chrome.storage.local.set({ [prefKey]: true });
+        }
+        closeActiveModal(true);
+        modalResolve(true);
+      });
+      
+      actions.appendChild(cancelBtn);
+      actions.appendChild(confirmBtn);
+      
+      modal.appendChild(body);
+      modal.appendChild(actions);
+      overlay.appendChild(modal);
+      
+      const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeActiveModal(false);
+          modalResolve(false);
+        }
+        if (e.key === 'Enter') {
+          if (document.activeElement === cancelBtn) return;
+          e.preventDefault();
+          confirmBtn.click();
+        }
+      };
+      
+      overlay.addEventListener('mousedown', (e) => {
+        if (e.target === overlay) {
+          closeActiveModal(false);
+          modalResolve(false);
+        }
+      });
+      
+      document.addEventListener('keydown', onKeyDown, { capture: true });
+      activeModalCleanup = () => {
+        document.removeEventListener('keydown', onKeyDown, { capture: true });
+      };
+      
+      document.body.appendChild(overlay);
+      activeModalOverlay = overlay;
+      
+      requestAnimationFrame(() => {
+        modal.classList.add('ce-modal-show');
+        cancelBtn.focus();
+      });
+    });
+  });
+}
+
 function createImportExportModal({ snippetCount, onClose, onExportJson, onExportMarkdown, onPreview, onConfirm }) {
   const overlay = document.createElement('div');
   overlay.className = 'ce-modal-overlay ce-extension';
@@ -1778,7 +1950,8 @@ function createSelectionToolbar(selection, range) {
   
   // Create elegant toolbar near the FAB
   const toolbar = document.createElement('div');
-  toolbar.className = 'ce-selection-toolbar';
+  const isMinimized = state.settings.minimizedMode || false;
+  toolbar.className = isMinimized ? 'ce-selection-toolbar ce-toolbar-minimized' : 'ce-selection-toolbar';
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', 'Selection actions');
   
@@ -1909,6 +2082,16 @@ function updateFABCount(fab, count) {
     countEl.textContent = count;
   }
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
+  
+  // Update opacity for minimized mode when count is 0
+  const isMinimized = fab.classList.contains('ce-fab-minimized');
+  if (isMinimized) {
+    if (count === 0) {
+      fab.style.opacity = '0.5';
+    } else {
+      fab.style.opacity = '';
+    }
+  }
 }
 
 function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery, totalCount, sortOrder, onSortToggle, onClearSelected, onToggleTheme) {
@@ -2089,7 +2272,8 @@ let state = {
   searchQuery: '',
   sortOrder: 'desc', // 'desc' for newest first, 'asc' for oldest first
   settings: {
-    theme: 'auto' // Default to auto (follows system)
+    theme: 'auto', // Default to auto (follows system)
+    minimizedMode: false // Default to full mode
   },
   // When ChatGPT navigates to a new thread, it can take a moment for the URL to include the new conversationId.
   // We track the previous conversation so we can offer to copy snippets forward once the new ID exists.
@@ -2432,11 +2616,23 @@ function scheduleBranchedFromTransferCheck() {
     }
     state.lastAutoTransferKey = key;
     
-    const copiedCount = copySnippetsToConversation({ fromConversationId: fromId, toConversationId: toConvId });
-    if (copiedCount > 0) {
-      createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} from parent thread`);
+    // Check if there are snippets to copy
+    const fromSnippets = state.items.filter(s => s.conversationId === fromId);
+    if (fromSnippets.length === 0) {
+      clearInterval(interval);
+      return;
     }
-    clearInterval(interval);
+    
+    // Show confirmation prompt
+    showBranchCopyPrompt(fromId, toConvId, fromSnippets.length).then((shouldCopy) => {
+      if (shouldCopy) {
+        const copiedCount = copySnippetsToConversation({ fromConversationId: fromId, toConversationId: toConvId });
+        if (copiedCount > 0) {
+          createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} from parent thread`);
+        }
+      }
+      clearInterval(interval);
+    });
   }, 500);
 }
 
@@ -2501,6 +2697,12 @@ async function handleToggleTheme() {
   createToast(`Theme: ${themeLabels[nextTheme]}`);
 }
 
+async function handleToggleMinimized() {
+  state.settings.minimizedMode = !state.settings.minimizedMode;
+  await persistState();
+  renderUI();
+}
+
 async function init() {
   container = createContainer();
   await loadState();
@@ -2533,10 +2735,15 @@ async function init() {
   if (currentSnippets.length > 0) {
     const url = window.location.href;
     const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
-    if (isMainPage) {
-      createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
-    } else if (state.currentConversationId) {
-      createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation`);
+    // Show "Loaded X snippets" toast only once per session
+    const toastShown = sessionStorage.getItem('ce_snippets_loaded_toast_shown');
+    if (!toastShown && currentSnippets.length > 0) {
+      if (isMainPage) {
+        createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
+      } else if (state.currentConversationId) {
+        createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation`);
+      }
+      sessionStorage.setItem('ce_snippets_loaded_toast_shown', 'true');
     }
   }
 }
@@ -2634,10 +2841,18 @@ function watchConversationChanges() {
       (now - explicit.at) < 15_000;
     if (isExplicitBranch) {
       state.pendingExplicitBranch = null;
-      // Avoid `confirm()` here: it can be blocked because this runs on navigation timers, not a direct user gesture.
-      const copiedCount = copySnippetsToConversation({ fromConversationId: fromConvId, toConversationId: toConvId });
-      if (copiedCount > 0) {
-        createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} into this thread`);
+      // Check if there are snippets to copy
+      const fromSnippets = state.items.filter(s => s.conversationId === fromConvId);
+      if (fromSnippets.length > 0) {
+        // Show confirmation prompt
+        showBranchCopyPrompt(fromConvId, toConvId, fromSnippets.length).then((shouldCopy) => {
+          if (shouldCopy) {
+            const copiedCount = copySnippetsToConversation({ fromConversationId: fromConvId, toConversationId: toConvId });
+            if (copiedCount > 0) {
+              createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} into this thread`);
+            }
+          }
+        });
       }
       return;
     }
@@ -2815,7 +3030,7 @@ function renderUI() {
     fab.parentNode.removeChild(fab);
   }
   // Show total count (not filtered)
-  fab = createFAB(totalSnippets.length, togglePanel);
+  fab = createFAB(totalSnippets.length, togglePanel, handleToggleMinimized);
   container.appendChild(fab);
   if (panel && panel.parentNode) {
     panel.parentNode.removeChild(panel);

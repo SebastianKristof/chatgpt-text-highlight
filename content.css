@@ -125,6 +125,53 @@
   color: var(--ce-text-primary);
 }
 
+/* Minimized FAB mode */
+.ce-fab-minimized {
+  padding: 10px 16px;
+  border-radius: 20px;
+  min-width: auto;
+  width: auto;
+}
+
+.ce-fab-minimized .ce-fab-text {
+  display: none;
+}
+
+.ce-fab-minimized .ce-fab-count {
+  background: transparent;
+  min-width: auto;
+  padding: 0;
+  font-size: 14px;
+}
+
+.ce-fab-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--ce-text-primary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  opacity: 0.7;
+}
+
+.ce-fab-chevron:hover {
+  opacity: 1;
+  background: var(--ce-bg-hover);
+}
+
+.ce-fab-chevron:active {
+  transform: scale(0.95);
+}
+
 /* Panel */
 .ce-panel {
   position: fixed;
@@ -667,6 +714,10 @@
 .ce-toolbar-label {
   font-weight: 500;
   letter-spacing: -0.01em;
+}
+
+.ce-toolbar-minimized .ce-toolbar-label {
+  display: none;
 }
 
 /* Toast */
