@@ -3,7 +3,6 @@
  */
 
 import { buildAnchor, findSelectionOffsets } from '../shared/anchor.js';
-import { hashText } from '../shared/hash.js';
 
 const MAX_SELECTION_SIZE = 10000; // 10k chars limit
 const MIN_SELECTION_LENGTH = 3; // Minimum characters to save a snippet
@@ -33,14 +32,6 @@ export function getConversationId() {
  */
 export function findMessageBlock(node) {
   if (!node) return null;
-  
-  // Common ChatGPT message selectors
-  const selectors = [
-    '[data-message-id]',
-    '[data-message-author-role]',
-    'div[class*="message"]',
-    'div[class*="Message"]'
-  ];
   
   let current = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
   

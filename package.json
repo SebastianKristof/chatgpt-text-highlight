@@ -7,7 +7,8 @@
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "lint": "eslint . --ext .js",
-    "lint:fix": "eslint . --ext .js --fix"
+    "lint:fix": "eslint . --ext .js --fix",
+    "prepare": "husky"
   },
   "keywords": [
     "chrome-extension",
@@ -19,6 +20,7 @@
   "license": "MIT",
   "devDependencies": {
     "eslint": "^8.57.0",
+    "husky": "^9.1.7",
     "vitest": "^1.0.0"
   }
 }

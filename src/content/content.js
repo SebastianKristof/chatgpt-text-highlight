@@ -20,7 +20,6 @@ let state = {
 };
 
 // Theme management
-const THEME_STORAGE_KEY = 'settings';
 const DEFAULT_THEME = 'auto';
 
 // Deduplication state
@@ -113,6 +112,7 @@ function expandImportDuplicates(items) {
   return { items: expanded, duplicates };
 }
 
+// eslint-disable-next-line no-unused-vars
 function dedupeSnippets(items) {
   const seen = new Set();
   const deduped = [];
@@ -202,7 +202,7 @@ async function init() {
   
   // Listen to system theme changes for auto mode
   if (window.matchMedia) {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (state.settings.theme === 'auto') {
         applyTheme('auto');
       }

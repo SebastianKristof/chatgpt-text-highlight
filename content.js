@@ -192,6 +192,7 @@ function generateSnippetId() {
   return `snippet_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
+// eslint-disable-next-line no-unused-vars
 function buildSnippetFromSelection() {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
@@ -388,7 +389,7 @@ function findMessageByPrefix(selectionPrefix) {
   return null;
 }
 
-function applyTransientHighlight(element, startOffset, endOffset) {
+function applyTransientHighlight(element, _startOffset, _endOffset) {
   if (!element) return;
   
   // Descoped: Just scroll to the message without DOM manipulation
@@ -631,11 +632,12 @@ function elementToMarkdown(element) {
             markdown += text;
           }
           break;
-        case 'pre':
+        case 'pre': {
           const codeElement = node.querySelector('code');
           const codeText = codeElement ? codeElement.textContent : node.textContent;
           markdown += '\n```\n' + codeText.trim() + '\n```\n';
           break;
+        }
         case 'h1':
           markdown += `# ${text.trim()}\n\n`;
           break;
@@ -646,7 +648,7 @@ function elementToMarkdown(element) {
           markdown += `### ${text.trim()}\n\n`;
           break;
         case 'ul':
-        case 'ol':
+        case 'ol': {
           const items = Array.from(node.querySelectorAll('li'));
           items.forEach((item, index) => {
             const itemText = elementToMarkdown(item).trim();
@@ -660,7 +662,8 @@ function elementToMarkdown(element) {
             markdown += '\n';
           }
           break;
-        case 'li':
+        }
+        case 'li': {
           // Handle nested lists and content
           const childNodes = Array.from(node.childNodes);
           let liContent = '';
@@ -679,12 +682,14 @@ function elementToMarkdown(element) {
           }
           markdown += liContent.trim();
           break;
-        case 'blockquote':
+        }
+        case 'blockquote': {
           const lines = text.split('\n').filter(l => l.trim());
           if (lines.length > 0) {
             markdown += lines.map(l => `> ${l.trim()}`).join('\n') + '\n\n';
           }
           break;
+        }
         default:
           markdown += text;
       }
@@ -1152,9 +1157,18 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, on
   
   const selectAllBtn = document.createElement('button');
   selectAllBtn.className = 'ce-btn ce-btn-select-all';
-  selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
-  selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
-  selectAllBtn.addEventListener('click', onSelectAll);
+  if (allSelected) {
+    selectAllBtn.textContent = `Deselect All (${selectedCount})`;
+    selectAllBtn.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
+  } else {
+    selectAllBtn.textContent = selectedCount > 0 ? `Select All (${selectedCount}/${snippetCount})` : 'Select All';
+    selectAllBtn.setAttribute('aria-label', `Select all ${snippetCount} snippets`);
+  }
+  selectAllBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelectAll();
+  };
   selectAllBtn.disabled = snippetCount === 0;
   
   const copyBtn = document.createElement('button');
@@ -1237,7 +1251,9 @@ function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetCl
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
-  const allSelected = selectedIds && selectedIds.size === snippets.length && snippets.length > 0;
+  // Check if all visible snippets are selected
+  const snippetIds = new Set(snippets.map(s => s.id));
+  const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
   const header = createPanelHeader({ 
     onCopy, 
     onClear, 
@@ -1829,9 +1845,17 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
   const clearBtn = panel.querySelector('.ce-btn-clear');
   
   if (selectAllBtn) {
-    const allSelected = selectedIds && selectedIds.size === snippets.length && snippets.length > 0;
-    selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
-    selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
+    // Check if all visible snippets are selected (same logic as in handleSelectAll)
+    const snippetIds = new Set(snippets.map(s => s.id));
+    const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
+    const selectedCount = selectedIds ? selectedIds.size : 0;
+    if (allSelected) {
+      selectAllBtn.textContent = `Deselect All (${selectedCount})`;
+      selectAllBtn.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
+    } else {
+      selectAllBtn.textContent = selectedCount > 0 ? `Select All (${selectedCount}/${snippets.length})` : 'Select All';
+      selectAllBtn.setAttribute('aria-label', `Select all ${snippets.length} snippets`);
+    }
     selectAllBtn.disabled = snippets.length === 0;
     // Update click handler - use onclick for reliable binding
     selectAllBtn.onclick = (e) => {
@@ -1941,6 +1965,7 @@ function expandImportDuplicates(items) {
   return { items: expanded, duplicates };
 }
 
+// eslint-disable-next-line no-unused-vars
 function dedupeSnippets(items) {
   const seen = new Set();
   const deduped = [];
@@ -2287,7 +2312,7 @@ async function init() {
   
   // Listen to system theme changes for auto mode
   if (window.matchMedia) {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (state.settings.theme === 'auto') {
         applyTheme('auto');
       }
@@ -3019,16 +3044,22 @@ function handleToggleSelect(snippetId) {
 
 function handleSelectAll() {
   const currentSnippets = getCurrentConversationSnippets();
+  if (currentSnippets.length === 0) return;
+  
   const currentSnippetIds = new Set(currentSnippets.map(item => item.id));
   const allSelected = currentSnippetIds.size > 0 && 
                       Array.from(currentSnippetIds).every(id => state.selectedIds.has(id));
   
   if (allSelected) {
     // Deselect all current conversation snippets
-    currentSnippetIds.forEach(id => state.selectedIds.delete(id));
+    currentSnippetIds.forEach(id => {
+      state.selectedIds.delete(id);
+    });
   } else {
     // Select all current conversation snippets
-    currentSnippetIds.forEach(id => state.selectedIds.add(id));
+    currentSnippetIds.forEach(id => {
+      state.selectedIds.add(id);
+    });
   }
   updateUI();
 }
@@ -3058,7 +3089,6 @@ async function handleCopySnippet(snippet) {
       if (snippetItem) {
         const copyBtn = snippetItem.querySelector('.ce-btn-copy');
         if (copyBtn) {
-          const originalContent = copyBtn.innerHTML;
           showCopyIndicator(copyBtn, '');
         }
       }

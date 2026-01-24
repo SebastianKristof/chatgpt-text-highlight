@@ -74,10 +74,6 @@ export function findMessageByPrefix(selectionPrefix) {
 export function applyTransientHighlight(element, startOffset, endOffset) {
   if (!element) return;
   
-  // Get the text content
-  const text = (element.innerText || element.textContent || '').trim();
-  const normalizedText = text.replace(/\s+/g, ' ');
-  
   // Find the text node(s) containing this range
   const walker = document.createTreeWalker(
     element,
@@ -93,7 +89,7 @@ export function applyTransientHighlight(element, startOffset, endOffset) {
   let endNodeOffset = 0;
   
   let node;
-  while (node = walker.nextNode()) {
+  while ((node = walker.nextNode())) {
     const nodeText = node.textContent || '';
     const normalizedNodeText = nodeText.replace(/\s+/g, ' ');
     const nodeLength = normalizedNodeText.length;
