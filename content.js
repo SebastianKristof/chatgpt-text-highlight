@@ -1215,34 +1215,6 @@ function createPanelHeader({ onCopy, onCopyAll, onClear, onClearSelected, onClos
   separator.className = 'ce-button-bar-separator';
   buttonBar.appendChild(separator);
   
-  // Snippet Counter
-  const counter = document.createElement('div');
-  counter.className = 'ce-snippet-counter';
-  // Calculate counts
-  const hasSearch = searchQuery && searchQuery.trim();
-  const visibleCount = snippetCount; // Already filtered by search
-  const totalSnippetCount = totalCount !== undefined ? totalCount : snippetCount;
-  const hasSelection = selectedCount > 0;
-  
-  // Build counter text based on state
-  let counterText = '';
-  if (hasSelection && hasSearch) {
-    // Selected + Searched: show selected / found / total
-    counterText = `${selectedCount} / ${visibleCount} / ${totalSnippetCount}`;
-  } else if (hasSelection) {
-    // Selected only: show selected / total
-    counterText = `${selectedCount} / ${totalSnippetCount}`;
-  } else if (hasSearch && visibleCount !== totalSnippetCount) {
-    // Searched only: show found / total
-    counterText = `${visibleCount} / ${totalSnippetCount}`;
-  } else {
-    // None selected, no search: show total
-    counterText = `${totalSnippetCount}`;
-  }
-  counter.textContent = counterText;
-  counter.setAttribute('aria-label', `Snippet count: ${counterText}`);
-  buttonBar.appendChild(counter);
-  
   // Copy All Button
   const copyAllBtn = document.createElement('button');
   copyAllBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-copy-all';
@@ -1295,6 +1267,34 @@ function createPanelHeader({ onCopy, onCopyAll, onClear, onClearSelected, onClos
     };
     buttonBar.appendChild(sortBtn);
   }
+  
+  // Snippet Counter (positioned on the right)
+  const snippetCounter = document.createElement('div');
+  snippetCounter.className = 'ce-snippet-counter';
+  // Calculate counts
+  const hasSearchQuery = searchQuery && searchQuery.trim();
+  const visibleSnippetCount = snippetCount; // Already filtered by search
+  const totalSnippetCount = totalCount !== undefined ? totalCount : snippetCount;
+  const hasSelectedSnippets = selectedCount > 0;
+  
+  // Build counter text based on state
+  let counterText = '';
+  if (hasSelectedSnippets && hasSearchQuery) {
+    // Selected + Searched: show selected / found / total
+    counterText = `${selectedCount} / ${visibleSnippetCount} / ${totalSnippetCount}`;
+  } else if (hasSelectedSnippets) {
+    // Selected only: show selected / total
+    counterText = `${selectedCount} / ${totalSnippetCount}`;
+  } else if (hasSearchQuery && visibleSnippetCount !== totalSnippetCount) {
+    // Searched only: show found / total
+    counterText = `${visibleSnippetCount} / ${totalSnippetCount}`;
+  } else {
+    // None selected, no search: show total
+    counterText = `${totalSnippetCount}`;
+  }
+  snippetCounter.textContent = counterText;
+  snippetCounter.setAttribute('aria-label', `Snippet count: ${counterText}`);
+  buttonBar.appendChild(snippetCounter);
   
   header.appendChild(titleRow);
   header.appendChild(searchContainer);
@@ -1975,30 +1975,30 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
   }
   
   // Update snippet counter
-  const counter = panel.querySelector('.ce-snippet-counter');
-  if (counter) {
+  const snippetCounter = panel.querySelector('.ce-snippet-counter');
+  if (snippetCounter) {
     const hasSearchQuery = searchQuery && searchQuery.trim();
-    const visibleCount = snippets.length; // Already filtered by search
+    const visibleSnippetCount = snippets.length; // Already filtered by search
     const totalSnippetCount = totalCount !== undefined ? totalCount : snippets.length;
-    const hasSelectedItems = selectedCount > 0;
+    const hasSelectedSnippets = selectedCount > 0;
     
     // Build counter text based on state
     let counterText = '';
-    if (hasSelectedItems && hasSearchQuery) {
+    if (hasSelectedSnippets && hasSearchQuery) {
       // Selected + Searched: show selected / found / total
-      counterText = `${selectedCount} / ${visibleCount} / ${totalSnippetCount}`;
-    } else if (hasSelectedItems) {
+      counterText = `${selectedCount} / ${visibleSnippetCount} / ${totalSnippetCount}`;
+    } else if (hasSelectedSnippets) {
       // Selected only: show selected / total
       counterText = `${selectedCount} / ${totalSnippetCount}`;
-    } else if (hasSearchQuery && visibleCount !== totalSnippetCount) {
+    } else if (hasSearchQuery && visibleSnippetCount !== totalSnippetCount) {
       // Searched only: show found / total
-      counterText = `${visibleCount} / ${totalSnippetCount}`;
+      counterText = `${visibleSnippetCount} / ${totalSnippetCount}`;
     } else {
       // None selected, no search: show total
       counterText = `${totalSnippetCount}`;
     }
-    counter.textContent = counterText;
-    counter.setAttribute('aria-label', `Snippet count: ${counterText}`);
+    snippetCounter.textContent = counterText;
+    snippetCounter.setAttribute('aria-label', `Snippet count: ${counterText}`);
   }
   
   // Update theme button (if it exists)

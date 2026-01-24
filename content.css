@@ -262,6 +262,7 @@
   gap: 4px;
   padding: 8px 0;
   border-bottom: 1px solid var(--ce-border-color);
+  justify-content: space-between;
 }
 
 .ce-select-all-wrapper {
@@ -331,7 +332,7 @@
   color: var(--ce-text-secondary);
   font-weight: 500;
   padding: 4px 8px;
-  margin: 0 4px;
+  margin-left: auto;
   white-space: nowrap;
   letter-spacing: -0.01em;
 }
