@@ -255,6 +255,78 @@
   letter-spacing: -0.02em;
 }
 
+/* Button Bar */
+.ce-button-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ce-border-color);
+}
+
+.ce-select-all-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 4px;
+  margin-right: 4px;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.ce-select-all-wrapper:hover {
+  background: var(--ce-bg-hover);
+}
+
+.ce-select-all-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--ce-text-primary);
+  margin: 0;
+}
+
+.ce-button-bar-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: var(--ce-text-primary);
+}
+
+.ce-button-bar-btn:hover:not(:disabled) {
+  background: var(--ce-bg-hover);
+}
+
+.ce-button-bar-btn:active:not(:disabled) {
+  background: var(--ce-bg-selected);
+  transform: scale(0.95);
+}
+
+.ce-button-bar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ce-button-bar-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--ce-border-color);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* Legacy styles - keep for backward compatibility but not used */
 .ce-panel-actions {
   display: flex;
   align-items: center;
@@ -262,17 +334,11 @@
 }
 
 .ce-panel-sort-counter-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin-top: 4px;
+  display: none; /* Hidden - sort button moved to button bar */
 }
 
 .ce-search-counter {
-  font-size: 13px;
-  color: var(--ce-text-secondary);
-  font-weight: 500;
+  display: none; /* Hidden - counter removed */
 }
 
 .ce-btn-sort {

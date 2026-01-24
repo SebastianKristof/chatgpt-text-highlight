@@ -1085,7 +1085,7 @@ function updateVirtualizedList(list) {
   container.appendChild(bottomSpacer);
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, onSearch, onToggleTheme, onSortToggle, currentTheme, snippetCount, selectedCount, allSelected, searchQuery, totalCount, sortOrder }) {
+function createPanelHeader({ onCopy, onCopyAll, onClear, onClearSelected, onClose, onManage, onSelectAll, onSearch, onToggleTheme, onSortToggle, currentTheme, snippetCount, selectedCount, allSelected, searchQuery, totalCount, sortOrder }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   
@@ -1138,104 +1138,139 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onSelectAll, on
   searchWrapper.appendChild(clearSearchBtn);
   searchContainer.appendChild(searchWrapper);
   
-  // Actions row (without close button)
-  const actions = document.createElement('div');
-  actions.className = 'ce-panel-actions';
+  // Button bar (replaces actions row)
+  const buttonBar = document.createElement('div');
+  buttonBar.className = 'ce-button-bar';
   
-  // Theme toggle button
+  // Select All Checkbox
+  const selectAllWrapper = document.createElement('label');
+  selectAllWrapper.className = 'ce-select-all-wrapper';
+  const selectAllCheckbox = document.createElement('input');
+  selectAllCheckbox.type = 'checkbox';
+  selectAllCheckbox.className = 'ce-select-all-checkbox';
+  selectAllCheckbox.setAttribute('aria-label', 'Select all snippets');
+  
+  // Determine checkbox state
+  const hasSelection = selectedCount > 0;
+  const isIndeterminate = hasSelection && !allSelected && snippetCount > 0;
+  
+  if (allSelected && snippetCount > 0) {
+    selectAllCheckbox.checked = true;
+    selectAllCheckbox.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
+    selectAllWrapper.title = `Deselect all ${selectedCount} snippets`;
+  } else if (isIndeterminate) {
+    selectAllCheckbox.indeterminate = true;
+    selectAllCheckbox.setAttribute('aria-label', `${selectedCount} of ${snippetCount} selected`);
+    selectAllWrapper.title = `${selectedCount} of ${snippetCount} selected`;
+  } else {
+    selectAllCheckbox.checked = false;
+    selectAllCheckbox.setAttribute('aria-label', `Select all ${snippetCount} snippets`);
+    selectAllWrapper.title = `Select all ${snippetCount} snippets`;
+  }
+  
+  selectAllCheckbox.disabled = snippetCount === 0;
+  selectAllCheckbox.addEventListener('change', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelectAll();
+  });
+  
+  selectAllWrapper.appendChild(selectAllCheckbox);
+  buttonBar.appendChild(selectAllWrapper);
+  
+  // Copy Selected Button
+  const copySelectedBtn = document.createElement('button');
+  copySelectedBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-copy-selected';
+  copySelectedBtn.innerHTML = '📋';
+  copySelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Copy ${selectedCount} selected snippets` : 'Copy selected');
+  copySelectedBtn.title = selectedCount > 0 ? `Copy ${selectedCount} selected` : 'Copy selected';
+  copySelectedBtn.disabled = selectedCount === 0;
+  copySelectedBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (selectedCount > 0) {
+      onCopy();
+    }
+  });
+  buttonBar.appendChild(copySelectedBtn);
+  
+  // Clear Selected Button
+  const clearSelectedBtn = document.createElement('button');
+  clearSelectedBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-clear-selected';
+  clearSelectedBtn.innerHTML = '🗑️';
+  clearSelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Clear ${selectedCount} selected snippets` : 'Clear selected');
+  clearSelectedBtn.title = selectedCount > 0 ? `Clear ${selectedCount} selected` : 'Clear selected';
+  clearSelectedBtn.disabled = selectedCount === 0;
+  clearSelectedBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (selectedCount > 0 && onClearSelected) {
+      await onClearSelected();
+    }
+  });
+  buttonBar.appendChild(clearSelectedBtn);
+  
+  // Visual separator (optional)
+  const separator = document.createElement('div');
+  separator.className = 'ce-button-bar-separator';
+  buttonBar.appendChild(separator);
+  
+  // Copy All Button
+  const copyAllBtn = document.createElement('button');
+  copyAllBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-copy-all';
+  copyAllBtn.innerHTML = '📄';
+  copyAllBtn.setAttribute('aria-label', 'Copy all snippets');
+  copyAllBtn.title = 'Copy all snippets';
+  copyAllBtn.disabled = snippetCount === 0;
+  copyAllBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onCopyAll) {
+      onCopyAll();
+    }
+  });
+  buttonBar.appendChild(copyAllBtn);
+  
+  // Import/Export Button
+  const manageBtn = document.createElement('button');
+  manageBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-manage';
+  manageBtn.innerHTML = '↕️';
+  manageBtn.setAttribute('aria-label', 'Import or export snippets');
+  manageBtn.title = 'Import/Export';
+  manageBtn.addEventListener('click', onManage);
+  buttonBar.appendChild(manageBtn);
+  
+  // Theme Toggle Button
   if (onToggleTheme && currentTheme) {
     const themeIcons = { auto: '🌓', light: '☀', dark: '🌙' };
     const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
     const themeBtn = document.createElement('button');
-    themeBtn.className = 'ce-btn ce-btn-icon ce-btn-theme';
+    themeBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-theme';
     themeBtn.innerHTML = themeIcons[currentTheme] || '🌓';
     themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
     themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
     themeBtn.addEventListener('click', onToggleTheme);
-    actions.appendChild(themeBtn);
+    buttonBar.appendChild(themeBtn);
   }
   
-  const selectAllBtn = document.createElement('button');
-  selectAllBtn.className = 'ce-btn ce-btn-select-all';
-  if (allSelected) {
-    selectAllBtn.textContent = `Deselect All (${selectedCount})`;
-    selectAllBtn.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
-  } else {
-    selectAllBtn.textContent = selectedCount > 0 ? `Select All (${selectedCount}/${snippetCount})` : 'Select All';
-    selectAllBtn.setAttribute('aria-label', `Select all ${snippetCount} snippets`);
+  // Sort Toggle Button
+  if (onSortToggle) {
+    const sortBtn = document.createElement('button');
+    sortBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-sort';
+    sortBtn.innerHTML = sortOrder === 'desc' ? '↓' : '↑';
+    sortBtn.setAttribute('aria-label', `Sort: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`);
+    sortBtn.title = `Sort: ${sortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'}`;
+    sortBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (onSortToggle) onSortToggle();
+    };
+    buttonBar.appendChild(sortBtn);
   }
-  selectAllBtn.onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onSelectAll();
-  };
-  selectAllBtn.disabled = snippetCount === 0;
-  
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'ce-btn ce-btn-secondary ce-btn-copy';
-  if (selectedCount > 0) {
-    copyBtn.textContent = `Copy (${selectedCount})`;
-    copyBtn.setAttribute('aria-label', `Copy ${selectedCount} selected snippets`);
-  } else {
-    copyBtn.textContent = 'Copy All';
-    copyBtn.setAttribute('aria-label', 'Copy all snippets');
-  }
-  copyBtn.addEventListener('click', onCopy);
-  copyBtn.disabled = snippetCount === 0;
-  
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'ce-btn ce-btn-secondary ce-btn-clear';
-  clearBtn.textContent = 'Clear';
-  clearBtn.setAttribute('aria-label', 'Clear all snippets');
-  clearBtn.addEventListener('click', async () => {
-    await onClear();
-  });
-  clearBtn.disabled = snippetCount === 0;
-  
-  const manageBtn = document.createElement('button');
-  manageBtn.className = 'ce-btn ce-btn-secondary ce-btn-manage';
-  manageBtn.textContent = 'Import/Export';
-  manageBtn.setAttribute('aria-label', 'Import or export snippets');
-  manageBtn.addEventListener('click', onManage);
-  
-  actions.appendChild(selectAllBtn);
-  actions.appendChild(copyBtn);
-  actions.appendChild(clearBtn);
-  actions.appendChild(manageBtn);
-  
-  // Sort and counter row (under actions)
-  const sortCounterRow = document.createElement('div');
-  sortCounterRow.className = 'ce-panel-sort-counter-row';
-  
-  // Search counter (always show, format depends on search state)
-  const counterContainer = document.createElement('div');
-  counterContainer.className = 'ce-search-counter';
-  if (searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippetCount) {
-    counterContainer.textContent = `${snippetCount} / ${totalCount}`;
-  } else {
-    counterContainer.textContent = totalCount !== undefined ? `${totalCount}` : `${snippetCount}`;
-  }
-  counterContainer.style.display = 'block';
-  
-  // Sort button
-  const sortBtn = document.createElement('button');
-  sortBtn.className = 'ce-btn ce-btn-icon ce-btn-sort';
-  sortBtn.innerHTML = sortOrder === 'desc' ? '↓' : '↑';
-  sortBtn.setAttribute('aria-label', `Sort: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`);
-  sortBtn.title = `Sort: ${sortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'}`;
-  sortBtn.onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (onSortToggle) onSortToggle();
-  };
-  
-  sortCounterRow.appendChild(counterContainer);
-  sortCounterRow.appendChild(sortBtn);
   
   header.appendChild(titleRow);
   header.appendChild(searchContainer);
-  header.appendChild(actions);
-  header.appendChild(sortCounterRow);
+  header.appendChild(buttonBar);
   return header;
 }
 
@@ -1246,7 +1281,7 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, onToggleTheme, onSortToggle, currentTheme, selectedIds, searchQuery, totalCount, sortOrder }) {
+function createPanel({ snippets, onCopy, onCopyAll, onClear, onClearSelected, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, onToggleTheme, onSortToggle, currentTheme, selectedIds, searchQuery, totalCount, sortOrder }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
@@ -1255,8 +1290,10 @@ function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetCl
   const snippetIds = new Set(snippets.map(s => s.id));
   const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
   const header = createPanelHeader({ 
-    onCopy, 
-    onClear, 
+    onCopy,
+    onCopyAll,
+    onClear,
+    onClearSelected,
     onClose, 
     onManage,
     onSelectAll,
@@ -1777,7 +1814,7 @@ function updateFABCount(fab, count) {
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery, totalCount, sortOrder, onSortToggle) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery, totalCount, sortOrder, onSortToggle, onClearSelected) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   
@@ -1816,67 +1853,76 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
   }
   
-  // Update search counter and sort button
-  const counterContainer = panel.querySelector('.ce-search-counter');
-  const sortBtn = panel.querySelector('.ce-btn-sort');
-  if (counterContainer) {
-    if (searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippets.length) {
-      counterContainer.textContent = `${snippets.length} / ${totalCount}`;
+  // Update button bar
+  const selectedCount = selectedIds ? selectedIds.size : 0;
+  const snippetIds = new Set(snippets.map(s => s.id));
+  const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
+  const hasSelection = selectedCount > 0;
+  const isIndeterminate = hasSelection && !allSelected && snippets.length > 0;
+  
+  // Update select all checkbox
+  const selectAllCheckbox = panel.querySelector('.ce-select-all-checkbox');
+  const selectAllWrapper = panel.querySelector('.ce-select-all-wrapper');
+  if (selectAllCheckbox) {
+    if (allSelected && snippets.length > 0) {
+      selectAllCheckbox.checked = true;
+      selectAllCheckbox.indeterminate = false;
+      selectAllCheckbox.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
+      if (selectAllWrapper) selectAllWrapper.title = `Deselect all ${selectedCount} snippets`;
+    } else if (isIndeterminate) {
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = true;
+      selectAllCheckbox.setAttribute('aria-label', `${selectedCount} of ${snippets.length} selected`);
+      if (selectAllWrapper) selectAllWrapper.title = `${selectedCount} of ${snippets.length} selected`;
     } else {
-      counterContainer.textContent = totalCount !== undefined ? `${totalCount}` : `${snippets.length}`;
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = false;
+      selectAllCheckbox.setAttribute('aria-label', `Select all ${snippets.length} snippets`);
+      if (selectAllWrapper) selectAllWrapper.title = `Select all ${snippets.length} snippets`;
     }
-    counterContainer.style.display = 'block';
+    selectAllCheckbox.disabled = snippets.length === 0;
   }
+  
+  // Update copy selected button
+  const copySelectedBtn = panel.querySelector('.ce-btn-copy-selected');
+  if (copySelectedBtn) {
+    copySelectedBtn.disabled = selectedCount === 0;
+    copySelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Copy ${selectedCount} selected snippets` : 'Copy selected');
+    copySelectedBtn.title = selectedCount > 0 ? `Copy ${selectedCount} selected` : 'Copy selected';
+  }
+  
+  // Update clear selected button
+  const clearSelectedBtn = panel.querySelector('.ce-btn-clear-selected');
+  if (clearSelectedBtn) {
+    clearSelectedBtn.disabled = selectedCount === 0;
+    clearSelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Clear ${selectedCount} selected snippets` : 'Clear selected');
+    clearSelectedBtn.title = selectedCount > 0 ? `Clear ${selectedCount} selected` : 'Clear selected';
+  }
+  
+  // Update copy all button
+  const copyAllBtn = panel.querySelector('.ce-btn-copy-all');
+  if (copyAllBtn) {
+    copyAllBtn.disabled = snippets.length === 0;
+  }
+  
+  // Update sort button
+  const sortBtn = panel.querySelector('.ce-btn-sort');
   if (sortBtn && sortOrder) {
     sortBtn.innerHTML = sortOrder === 'desc' ? '↓' : '↑';
     sortBtn.setAttribute('aria-label', `Sort: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`);
     sortBtn.title = `Sort: ${sortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'}`;
-    // Update click handler - use onclick for reliable binding
     sortBtn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      onSortToggle();
+      if (onSortToggle) onSortToggle();
     };
   }
   
-  // Update header buttons
-  const selectAllBtn = panel.querySelector('.ce-btn-select-all');
-  const copyBtn = panel.querySelector('.ce-btn-copy');
-  const clearBtn = panel.querySelector('.ce-btn-clear');
-  
-  if (selectAllBtn) {
-    // Check if all visible snippets are selected (same logic as in handleSelectAll)
-    const snippetIds = new Set(snippets.map(s => s.id));
-    const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
-    const selectedCount = selectedIds ? selectedIds.size : 0;
-    if (allSelected) {
-      selectAllBtn.textContent = `Deselect All (${selectedCount})`;
-      selectAllBtn.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
-    } else {
-      selectAllBtn.textContent = selectedCount > 0 ? `Select All (${selectedCount}/${snippets.length})` : 'Select All';
-      selectAllBtn.setAttribute('aria-label', `Select all ${snippets.length} snippets`);
-    }
-    selectAllBtn.disabled = snippets.length === 0;
-    // Update click handler - use onclick for reliable binding
-    selectAllBtn.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onSelectAll();
-    };
+  // Update theme button (if it exists)
+  const themeBtn = panel.querySelector('.ce-btn-theme');
+  if (themeBtn && onToggleTheme) {
+    // Theme button state is managed by the theme toggle handler, no update needed here
   }
-  
-  if (copyBtn) {
-    const selectedCount = selectedIds ? selectedIds.size : 0;
-    if (selectedCount > 0) {
-      copyBtn.textContent = `Copy (${selectedCount})`;
-      copyBtn.setAttribute('aria-label', `Copy ${selectedCount} selected snippets`);
-    } else {
-      copyBtn.textContent = 'Copy All';
-      copyBtn.setAttribute('aria-label', 'Copy all snippets');
-    }
-    copyBtn.disabled = snippets.length === 0;
-  }
-  if (clearBtn) clearBtn.disabled = snippets.length === 0;
 }
 
 // ============================================================================
@@ -2625,7 +2671,9 @@ function renderUI() {
   panel = createPanel({
     snippets: currentSnippets,
     onCopy: handleCopy,
+    onCopyAll: handleCopyAll,
     onClear: handleClear,
+    onClearSelected: handleClearSelected,
     onClose: handleClose,
     onRemove: handleRemove,
     onSnippetClick: handleSnippetClick,
@@ -2708,7 +2756,7 @@ function updateUI() {
       themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
     }
     
-    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery, totalSnippets.length, state.sortOrder, handleSortToggle);
+    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery, totalSnippets.length, state.sortOrder, handleSortToggle, handleClearSelected);
   }
 }
 
@@ -2845,6 +2893,29 @@ async function handleClear() {
   createToast(`Cleared ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
 }
 
+async function handleClearSelected() {
+  if (state.selectedIds.size === 0) return;
+  
+  const selectedSnippets = state.items.filter(snippet => state.selectedIds.has(snippet.id));
+  if (selectedSnippets.length === 0) return;
+  
+  const ok = await showConfirmModal({
+    title: 'Clear selected snippets?',
+    message: `Clear ${selectedSnippets.length} selected snippet${selectedSnippets.length !== 1 ? 's' : ''}?`,
+    confirmText: 'Clear',
+    cancelText: 'Cancel',
+    danger: true
+  });
+  if (!ok) return;
+  
+  // Remove selected snippets
+  state.items = state.items.filter(snippet => !state.selectedIds.has(snippet.id));
+  state.selectedIds.clear();
+  updateUI();
+  persistState();
+  createToast(`Cleared ${selectedSnippets.length} snippet${selectedSnippets.length !== 1 ? 's' : ''}`);
+}
+
 function showCopyIndicator(button, originalText) {
   if (!button) return;
   
@@ -2901,12 +2972,53 @@ async function handleCopy() {
     const count = snippetsToCopy.length;
     createToast(`Copied ${count} snippet${count !== 1 ? 's' : ''} to clipboard`);
     
+    // Show indicator on Copy Selected button
+    if (panel) {
+      const copyBtn = panel.querySelector('.ce-btn-copy-selected');
+      if (copyBtn) {
+        showCopyIndicator(copyBtn, copyBtn.innerHTML);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to copy:', error);
+    createToast('Failed to copy to clipboard');
+  }
+}
+
+async function handleCopyAll() {
+  // Get visible (filtered) snippets
+  const visibleSnippets = getCurrentConversationSnippets();
+  
+  if (visibleSnippets.length === 0) {
+    createToast('No snippets to copy');
+    return;
+  }
+  
+  // Always copy all visible snippets, regardless of selection
+  const snippetsToCopy = visibleSnippets;
+  
+  // Format snippets as markdown with cleanup
+  const markdown = snippetsToCopy
+    .map((snippet) => {
+      // Clean up each snippet's markdown
+      const cleaned = cleanupMarkdown(snippet.text);
+      return cleaned;
+    })
+    .join('\n\n');
+  
+  // Apply final cleanup to the entire output
+  const finalMarkdown = cleanupMarkdown(markdown);
+  
+  try {
+    await navigator.clipboard.writeText(finalMarkdown);
+    const count = snippetsToCopy.length;
+    createToast(`Copied ${count} snippet${count !== 1 ? 's' : ''} to clipboard`);
+    
     // Show indicator on Copy All button
     if (panel) {
-      const copyBtn = panel.querySelector('.ce-btn-copy');
-      if (copyBtn) {
-        const originalText = copyBtn.textContent;
-        showCopyIndicator(copyBtn, originalText);
+      const copyAllBtn = panel.querySelector('.ce-btn-copy-all');
+      if (copyAllBtn) {
+        showCopyIndicator(copyAllBtn, copyAllBtn.innerHTML);
       }
     }
   } catch (error) {
