@@ -839,6 +839,42 @@ function enableFabDragging(fabEl) {
   fabEl.addEventListener('pointercancel', endDrag);
 }
 
+/**
+ * Formats a timestamp with date, weekday, and relative markers.
+ * @param {Date} date - Date to format
+ * @returns {string} Formatted timestamp string
+ */
+function formatTimestamp(date) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const snippetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  
+  const daysDiff = Math.floor((today - snippetDate) / (1000 * 60 * 60 * 24));
+  
+  // Format time
+  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
+  // Format weekday
+  const weekday = date.toLocaleDateString([], { weekday: 'short' });
+  
+  // Format date (month and day)
+  const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  
+  // Base format: Time, Weekday, Date
+  let formatted = `${timeStr}, ${weekday}, ${dateStr}`;
+  
+  // Add relative marker in parentheses (always shown)
+  if (daysDiff === 0) {
+    formatted += ' (Today)';
+  } else if (daysDiff === 1) {
+    formatted += ' (Yesterday)';
+  } else {
+    formatted += ` (${daysDiff} days ago)`;
+  }
+  
+  return formatted;
+}
+
 function createFAB(count, onClick) {
   const fab = document.createElement('button');
   fab.className = 'ce-fab';
@@ -889,7 +925,7 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   const meta = document.createElement('div');
   meta.className = 'ce-snippet-meta';
   const timestamp = new Date(snippet.timestamp);
-  const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = formatTimestamp(timestamp);
   const timeEl = document.createElement('span');
   timeEl.textContent = timeStr;
   meta.appendChild(timeEl);
