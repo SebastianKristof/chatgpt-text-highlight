@@ -1329,9 +1329,7 @@ function createPanelHeader({ onCopy, onCopyAll, onClear: _onClear, onClearSelect
   copySelectedBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (selectedCount > 0) {
-      onCopy();
-    }
+    onCopy();
   });
   buttonBar.appendChild(copySelectedBtn);
   
@@ -1345,7 +1343,7 @@ function createPanelHeader({ onCopy, onCopyAll, onClear: _onClear, onClearSelect
   clearSelectedBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (selectedCount > 0 && onClearSelected) {
+    if (onClearSelected) {
       await onClearSelected();
     }
   });
