@@ -1226,7 +1226,7 @@ function updateVirtualizedList(list) {
   container.appendChild(bottomSpacer);
 }
 
-function createPanelHeader({ onCopy, onCopyAll, onClear, onClearSelected, onClose, onManage, onSelectAll, onSearch, onToggleTheme, onSortToggle, currentTheme, snippetCount, selectedCount, allSelected, searchQuery, totalCount, sortOrder }) {
+function createPanelHeader({ onCopy, onCopyAll, onClear: _onClear, onClearSelected, onClose, onManage, onSelectAll, onSearch, onToggleTheme, onSortToggle, currentTheme, snippetCount, selectedCount, allSelected, searchQuery, totalCount, sortOrder }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   
@@ -1458,6 +1458,8 @@ function createPanel({ snippets, onCopy, onCopyAll, onClear, onClearSelected, on
   // Check if all visible snippets are selected
   const snippetIds = new Set(snippets.map(s => s.id));
   const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
+  // Count only selected snippets that are visible (not all selected snippets across all conversations)
+  const visibleSelectedCount = selectedIds ? snippets.filter(s => selectedIds.has(s.id)).length : 0;
   const header = createPanelHeader({ 
     onCopy,
     onCopyAll,
@@ -1471,7 +1473,7 @@ function createPanel({ snippets, onCopy, onCopyAll, onClear, onClearSelected, on
     onSortToggle,
     currentTheme,
     snippetCount: snippets.length, 
-    selectedCount: selectedIds ? selectedIds.size : 0,
+    selectedCount: visibleSelectedCount,
     allSelected,
     searchQuery,
     totalCount,
@@ -2194,7 +2196,8 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
   }
   
   // Update button bar
-  const selectedCount = selectedIds ? selectedIds.size : 0;
+  // Count only selected snippets that are visible (not all selected snippets across all conversations)
+  const selectedCount = selectedIds ? snippets.filter(s => selectedIds.has(s.id)).length : 0;
   const snippetIds = new Set(snippets.map(s => s.id));
   const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
   const hasSelection = selectedCount > 0;

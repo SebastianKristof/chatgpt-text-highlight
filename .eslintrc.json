@@ -14,6 +14,7 @@
     "no-console": ["warn", { "allow": ["warn", "error"] }]
   },
   "globals": {
-    "chrome": "readonly"
+    "chrome": "readonly",
+    "process": "readonly"
   }
 }
