@@ -25,5 +25,30 @@ describe('hashText', () => {
     const b = hashText('bar');
     expect(a).not.toBe(b);
   });
+
+  it('handles special characters', () => {
+    const hash1 = hashText('hello@world.com');
+    const hash2 = hashText('hello@world.com');
+    expect(hash1).toBe(hash2);
+  });
+
+  it('handles unicode characters', () => {
+    const hash1 = hashText('Hello 世界');
+    const hash2 = hashText('Hello 世界');
+    expect(hash1).toBe(hash2);
+  });
+
+  it('handles very long text', () => {
+    const longText = 'a'.repeat(10000);
+    const hash = hashText(longText);
+    expect(hash).toBeTruthy();
+    expect(typeof hash).toBe('string');
+  });
+
+  it('returns non-empty hash for non-empty input', () => {
+    const hash = hashText('a');
+    expect(hash).toBeTruthy();
+    expect(hash.length).toBeGreaterThan(0);
+  });
 });
 

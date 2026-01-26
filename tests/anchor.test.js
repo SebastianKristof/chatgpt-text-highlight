@@ -31,6 +31,34 @@ describe('buildAnchor', () => {
 
     expect(anchor.messageId).toBeNull();
   });
+
+  it('truncates selection prefix to 32 characters', () => {
+    const longText = 'a'.repeat(100);
+    const anchor = buildAnchor({
+      conversationId: 'conv-123',
+      messageId: 'msg-1',
+      messageText: 'Hello world',
+      selectionText: longText,
+      selectionStart: 0,
+      selectionEnd: 100
+    });
+
+    expect(anchor.selectionPrefix.length).toBeLessThanOrEqual(32);
+    expect(anchor.selectionPrefix).toBe(longText.substring(0, 32).trim());
+  });
+
+  it('handles null messageId', () => {
+    const anchor = buildAnchor({
+      conversationId: 'conv-123',
+      messageId: null,
+      messageText: 'Hello world',
+      selectionText: 'world',
+      selectionStart: 6,
+      selectionEnd: 11
+    });
+
+    expect(anchor.messageId).toBeNull();
+  });
 });
 
 describe('findSelectionOffsets', () => {
@@ -66,6 +94,31 @@ describe('findSelectionOffsets', () => {
     const offsets = findSelectionOffsets(message, selection);
 
     expect(offsets).toBeNull();
+  });
+
+  it('handles selection at start of message', () => {
+    const message = 'Hello world';
+    const selection = 'Hello';
+    const offsets = findSelectionOffsets(message, selection);
+
+    expect(offsets).not.toBeNull();
+    expect(offsets.start).toBe(0);
+  });
+
+  it('handles selection at end of message', () => {
+    const message = 'Hello world';
+    const selection = 'world';
+    const offsets = findSelectionOffsets(message, selection);
+
+    expect(offsets).not.toBeNull();
+    expect(offsets.end).toBeLessThanOrEqual(message.length);
+  });
+
+  it('handles null or undefined inputs', () => {
+    expect(findSelectionOffsets(null, 'test')).toBeNull();
+    expect(findSelectionOffsets('test', null)).toBeNull();
+    expect(findSelectionOffsets(undefined, 'test')).toBeNull();
+    expect(findSelectionOffsets('test', undefined)).toBeNull();
   });
 });
 
