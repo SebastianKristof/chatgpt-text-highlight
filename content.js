@@ -1251,36 +1251,32 @@ function updateVirtualizedList(list) {
   container.appendChild(bottomSpacer);
 }
 
-function createScopeSelector({ onScopeChange, currentScope, currentProjectId }) {
-  const scopeSelector = document.createElement('div');
-  scopeSelector.className = 'ce-scope-selector';
-  
-  const scopeOptions = [
+function buildScopeOptions(currentProjectId) {
+  return [
     { value: 'thread', label: 'Thread' },
     ...(currentProjectId ? [{ value: 'project', label: 'Project' }] : []),
     { value: 'all', label: 'All' }
   ];
-  
-  scopeOptions.forEach(option => {
-    const btn = document.createElement('button');
-    btn.className = 'ce-scope-btn';
-    btn.dataset.scope = option.value;
-    btn.textContent = option.label;
-    btn.setAttribute('aria-label', `Search scope: ${option.label}`);
-    if (currentScope === option.value) {
-      btn.classList.add('active');
-    }
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (onScopeChange) {
-        onScopeChange(option.value);
-      }
-    });
-    scopeSelector.appendChild(btn);
+}
+
+function createScopeToggle({ onScopeChange, currentScope, currentProjectId }) {
+  const options = buildScopeOptions(currentProjectId);
+  const btn = document.createElement('button');
+  btn.className = 'ce-scope-toggle';
+  btn.setAttribute('type', 'button');
+  btn.dataset.scope = currentScope || 'thread';
+  const current = options.find(opt => opt.value === (currentScope || 'thread')) || options[0];
+  btn.textContent = current.label;
+  btn.setAttribute('aria-label', `Search scope: ${current.label}`);
+  btn.title = `Search scope: ${current.label}`;
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!onScopeChange) return;
+    const nextIndex = (options.findIndex(opt => opt.value === btn.dataset.scope) + 1) % options.length;
+    onScopeChange(options[nextIndex].value);
   });
-  
-  return scopeSelector;
+  return btn;
 }
 
 function createPanelHeader({ onCopy, onCopyAll, onClear: _onClear, onClearSelected, onClose, onManage, onSelectAll, onSearch, onToggleTheme, onSortToggle, currentTheme, snippetCount, selectedCount, allSelected, searchQuery, totalCount, sortOrder, onScopeChange, currentScope, currentProjectId }) {
@@ -1334,16 +1330,15 @@ function createPanelHeader({ onCopy, onCopyAll, onClear: _onClear, onClearSelect
   
   searchWrapper.appendChild(searchInput);
   searchWrapper.appendChild(clearSearchBtn);
-  searchContainer.appendChild(searchWrapper);
-  
-  let scopeSelector = null;
   if (searchQuery && searchQuery.trim() && onScopeChange) {
-    scopeSelector = createScopeSelector({
+    const scopeToggle = createScopeToggle({
       onScopeChange,
       currentScope: currentScope || 'thread',
       currentProjectId: currentProjectId || null
     });
+    searchWrapper.appendChild(scopeToggle);
   }
+  searchContainer.appendChild(searchWrapper);
   
   // Button bar (replaces actions row)
   const buttonBar = document.createElement('div');
@@ -1503,9 +1498,6 @@ function createPanelHeader({ onCopy, onCopyAll, onClear: _onClear, onClearSelect
   
   header.appendChild(titleRow);
   header.appendChild(searchContainer);
-  if (scopeSelector) {
-    header.appendChild(scopeSelector);
-  }
   header.appendChild(buttonBar);
   return header;
 }
@@ -2294,40 +2286,30 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
   }
   
-  // Update scope selector
-  const scopeSelector = panel.querySelector('.ce-scope-selector');
+  // Update scope toggle (inside search bar)
   const hasSearchQuery = searchQuery && searchQuery.trim();
+  const scopeToggle = panel.querySelector('.ce-scope-toggle');
   if (hasSearchQuery && onScopeChange) {
-    const shouldShowProject = !!currentProjectId;
-    const hasProjectButton = !!scopeSelector?.querySelector('[data-scope="project"]');
-    const needsRebuild = !scopeSelector || shouldShowProject !== hasProjectButton;
-    
-    if (needsRebuild) {
-      if (scopeSelector) {
-        scopeSelector.remove();
+    const options = buildScopeOptions(currentProjectId || null);
+    const current = options.find(opt => opt.value === (currentScope || 'thread')) || options[0];
+    if (!scopeToggle) {
+      const searchWrapper = panel.querySelector('.ce-search-wrapper');
+      if (searchWrapper) {
+        const newToggle = createScopeToggle({
+          onScopeChange,
+          currentScope: currentScope || 'thread',
+          currentProjectId: currentProjectId || null
+        });
+        searchWrapper.appendChild(newToggle);
       }
-      const newScopeSelector = createScopeSelector({
-        onScopeChange,
-        currentScope: currentScope || 'thread',
-        currentProjectId: currentProjectId || null
-      });
-      const header = panel.querySelector('.ce-panel-header');
-      const searchContainer = panel.querySelector('.ce-search-container');
-      const buttonBar = panel.querySelector('.ce-button-bar');
-      if (header && searchContainer) {
-        header.insertBefore(newScopeSelector, searchContainer.nextSibling || buttonBar || null);
-      } else if (header) {
-        header.appendChild(newScopeSelector);
-      }
-    } else if (scopeSelector) {
-      const buttons = scopeSelector.querySelectorAll('.ce-scope-btn');
-      const activeScope = currentScope || 'thread';
-      buttons.forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.scope === activeScope);
-      });
+    } else {
+      scopeToggle.dataset.scope = current.value;
+      scopeToggle.textContent = current.label;
+      scopeToggle.setAttribute('aria-label', `Search scope: ${current.label}`);
+      scopeToggle.title = `Search scope: ${current.label}`;
     }
-  } else if (scopeSelector && !hasSearchQuery) {
-    scopeSelector.remove();
+  } else if (scopeToggle && !hasSearchQuery) {
+    scopeToggle.remove();
   }
   
   // Update button bar

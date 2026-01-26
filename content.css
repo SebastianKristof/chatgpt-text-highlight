@@ -249,7 +249,7 @@
 
 .ce-search-input {
   width: 100%;
-  padding: 10px 36px 10px 14px;
+  padding: 10px 92px 10px 14px;
   border: 1px solid var(--ce-border-hover);
   border-radius: 8px;
   font-size: 14px;
@@ -297,48 +297,28 @@
   color: var(--ce-text-primary);
 }
 
-/* Scope Selector */
-.ce-scope-selector {
-  display: flex !important;
-  gap: 4px;
-  padding: 8px 0;
-  margin-top: 8px;
-  margin-bottom: 8px;
-  border-top: 1px solid var(--ce-border-color);
-  width: 100%;
-  box-sizing: border-box;
-  opacity: 1 !important;
-  visibility: visible !important;
-  height: auto !important;
-  min-height: 40px;
-}
-
-.ce-scope-btn {
-  flex: 1;
-  padding: 8px 12px;
+/* Scope Toggle (inside search) */
+.ce-scope-toggle {
+  position: absolute;
+  right: 34px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 24px;
+  padding: 0 10px;
   border: 1px solid var(--ce-border-color);
-  border-radius: 6px;
+  border-radius: 999px;
   background: var(--ce-bg-primary);
   color: var(--ce-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
-  font-family: inherit;
-  min-height: 32px;
 }
 
-.ce-scope-btn:hover {
+.ce-scope-toggle:hover {
   background: var(--ce-bg-hover);
   border-color: var(--ce-border-hover);
   color: var(--ce-text-primary);
-}
-
-.ce-scope-btn.active {
-  background: var(--ce-bg-hover);
-  border-color: var(--ce-border-hover);
-  color: var(--ce-text-primary);
-  font-weight: 600;
 }
 
 .ce-panel-title {
