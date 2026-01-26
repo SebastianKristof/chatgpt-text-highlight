@@ -3388,14 +3388,23 @@ async function handleCopy() {
     return;
   }
   
+  // Sort snippets chronologically (oldest first) for copying, regardless of display order
+  snippetsToCopy.sort((a, b) => {
+    const aTime = a.timestamp || 0;
+    const bTime = b.timestamp || 0;
+    return aTime - bTime; // Oldest first
+  });
+  
   // Format snippets as markdown with cleanup
+  // Add separator between snippets if copying multiple
+  const separator = snippetsToCopy.length > 1 ? '\n\n---\n\n' : '\n\n';
   const markdown = snippetsToCopy
     .map((snippet) => {
       // Clean up each snippet's markdown
       const cleaned = cleanupMarkdown(snippet.text);
       return cleaned;
     })
-    .join('\n\n');
+    .join(separator);
   
   // Apply final cleanup to the entire output
   const finalMarkdown = cleanupMarkdown(markdown);
@@ -3430,14 +3439,23 @@ async function handleCopyAll() {
   // Always copy all visible snippets, regardless of selection
   const snippetsToCopy = visibleSnippets;
   
+  // Sort snippets chronologically (oldest first) for copying, regardless of display order
+  snippetsToCopy.sort((a, b) => {
+    const aTime = a.timestamp || 0;
+    const bTime = b.timestamp || 0;
+    return aTime - bTime; // Oldest first
+  });
+  
   // Format snippets as markdown with cleanup
+  // Add separator between snippets if copying multiple
+  const separator = snippetsToCopy.length > 1 ? '\n\n---\n\n' : '\n\n';
   const markdown = snippetsToCopy
     .map((snippet) => {
       // Clean up each snippet's markdown
       const cleaned = cleanupMarkdown(snippet.text);
       return cleaned;
     })
-    .join('\n\n');
+    .join(separator);
   
   // Apply final cleanup to the entire output
   const finalMarkdown = cleanupMarkdown(markdown);
