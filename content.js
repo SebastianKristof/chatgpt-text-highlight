@@ -1586,12 +1586,18 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'ce-btn';
     cancelBtn.textContent = cancelText;
-    cancelBtn.addEventListener('click', () => closeActiveModal(false));
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeActiveModal(false);
+    });
     
     const okBtn = document.createElement('button');
     okBtn.className = danger ? 'ce-btn ce-btn-danger' : 'ce-btn ce-btn-secondary';
     okBtn.textContent = confirmText;
-    okBtn.addEventListener('click', () => closeActiveModal(true));
+    okBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeActiveModal(true);
+    });
     
     actions.appendChild(cancelBtn);
     actions.appendChild(okBtn);
@@ -1615,7 +1621,10 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
     
     overlay.addEventListener('mousedown', (e) => {
       // Click outside closes (cancel)
-      if (e.target === overlay) closeActiveModal(false);
+      if (e.target === overlay) {
+        e.stopPropagation();
+        closeActiveModal(false);
+      }
     });
     
     document.addEventListener('keydown', onKeyDown, { capture: true });
@@ -1704,7 +1713,8 @@ async function showBranchCopyPrompt(fromConversationId, toConversationId, snippe
       const cancelBtn = document.createElement('button');
       cancelBtn.className = 'ce-btn';
       cancelBtn.textContent = 'Cancel';
-      cancelBtn.addEventListener('click', () => {
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         closeActiveModal(false);
         modalResolve(false);
       });
@@ -1712,7 +1722,8 @@ async function showBranchCopyPrompt(fromConversationId, toConversationId, snippe
       const confirmBtn = document.createElement('button');
       confirmBtn.className = 'ce-btn ce-btn-secondary';
       confirmBtn.textContent = 'Copy';
-      confirmBtn.addEventListener('click', async () => {
+      confirmBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
         const dontAsk = checkbox.checked;
         if (dontAsk) {
           // Store preference
@@ -1745,6 +1756,7 @@ async function showBranchCopyPrompt(fromConversationId, toConversationId, snippe
       
       overlay.addEventListener('mousedown', (e) => {
         if (e.target === overlay) {
+          e.stopPropagation();
           closeActiveModal(false);
           modalResolve(false);
         }
@@ -1772,6 +1784,7 @@ function createImportExportModal({ snippetCount, onClose, onExportJson, onExport
   overlay.setAttribute('role', 'presentation');
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
+      e.stopPropagation();
       onClose();
     }
   });
@@ -1796,7 +1809,10 @@ function createImportExportModal({ snippetCount, onClose, onExportJson, onExport
   closeIcon.className = 'ce-btn ce-btn-icon';
   closeIcon.setAttribute('aria-label', 'Close import/export');
   closeIcon.innerHTML = '×';
-  closeIcon.addEventListener('click', onClose);
+  closeIcon.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClose();
+  });
 
   titleRow.appendChild(title);
   titleRow.appendChild(closeIcon);
@@ -1819,13 +1835,19 @@ function createImportExportModal({ snippetCount, onClose, onExportJson, onExport
   exportJsonBtn.className = 'ce-btn ce-btn-secondary';
   exportJsonBtn.textContent = 'Export JSON';
   exportJsonBtn.disabled = snippetCount === 0;
-  exportJsonBtn.addEventListener('click', onExportJson);
+  exportJsonBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onExportJson();
+  });
 
   const exportMdBtn = document.createElement('button');
   exportMdBtn.className = 'ce-btn ce-btn-secondary';
   exportMdBtn.textContent = 'Export Markdown';
   exportMdBtn.disabled = snippetCount === 0;
-  exportMdBtn.addEventListener('click', onExportMarkdown);
+  exportMdBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onExportMarkdown();
+  });
 
   exportRow.appendChild(exportJsonBtn);
   exportRow.appendChild(exportMdBtn);
@@ -1873,7 +1895,10 @@ function createImportExportModal({ snippetCount, onClose, onExportJson, onExport
   const chooseBtn = document.createElement('button');
   chooseBtn.className = 'ce-btn ce-btn-secondary';
   chooseBtn.textContent = 'Choose JSON';
-  chooseBtn.addEventListener('click', () => fileInput.click());
+  chooseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fileInput.click();
+  });
 
   const fileName = document.createElement('div');
   fileName.className = 'ce-file-name';
@@ -1942,7 +1967,8 @@ function createImportExportModal({ snippetCount, onClose, onExportJson, onExport
   confirmBtn.className = 'ce-btn ce-btn-secondary';
   confirmBtn.textContent = 'Confirm import';
   confirmBtn.disabled = true;
-  confirmBtn.addEventListener('click', () => {
+  confirmBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (!pendingImport) return;
     const mode = mergeInput.checked ? 'merge' : 'replace';
     onConfirm(pendingImport, mode, setStatus, setPreview, setPending);
@@ -1951,7 +1977,10 @@ function createImportExportModal({ snippetCount, onClose, onExportJson, onExport
   const closeBtn = document.createElement('button');
   closeBtn.className = 'ce-btn ce-btn-secondary';
   closeBtn.textContent = 'Close';
-  closeBtn.addEventListener('click', onClose);
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClose();
+  });
 
   actions.appendChild(confirmBtn);
   actions.appendChild(closeBtn);
@@ -3182,6 +3211,10 @@ function setupEventListeners() {
   });
   document.addEventListener('click', (e) => {
     if (modalOpen) return;
+    // Don't close panel if clicking on modal overlay (confirmation modal)
+    if (activeModalOverlay) {
+      return;
+    }
     if (state.panelOpen && panel && !panel.contains(e.target) && !fab.contains(e.target)) {
       handleClose();
     }
