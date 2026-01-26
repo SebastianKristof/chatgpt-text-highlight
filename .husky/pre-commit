@@ -1,0 +1,8 @@
+# Load nvm if available (for npm/npx)
+if [ -f "$HOME/.nvm/nvm.sh" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+fi
+
+# Run eslint via npx (more reliable than npm in git hooks)
+npx --no-install eslint . --ext .js

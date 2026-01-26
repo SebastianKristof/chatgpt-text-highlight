@@ -3,6 +3,7 @@
  */
 
 import { hashText } from '../shared/hash.js';
+import { getConversationIdFromUrl } from '../shared/urlIds.js';
 
 const HIGHLIGHT_DURATION = 2500; // 2.5 seconds
 
@@ -74,10 +75,6 @@ export function findMessageByPrefix(selectionPrefix) {
 export function applyTransientHighlight(element, startOffset, endOffset) {
   if (!element) return;
   
-  // Get the text content
-  const text = (element.innerText || element.textContent || '').trim();
-  const normalizedText = text.replace(/\s+/g, ' ');
-  
   // Find the text node(s) containing this range
   const walker = document.createTreeWalker(
     element,
@@ -93,7 +90,7 @@ export function applyTransientHighlight(element, startOffset, endOffset) {
   let endNodeOffset = 0;
   
   let node;
-  while (node = walker.nextNode()) {
+  while ((node = walker.nextNode())) {
     const nodeText = node.textContent || '';
     const normalizedNodeText = nodeText.replace(/\s+/g, ' ');
     const nodeLength = normalizedNodeText.length;
@@ -160,11 +157,11 @@ export function applyTransientHighlight(element, startOffset, endOffset) {
 /**
  * Navigates to the source of a snippet and applies transient highlight.
  * @param {Object} snippet - Snippet object with anchor
- * @returns {boolean} True if navigation succeeded, false otherwise
+ * @returns {{success: boolean, reason?: string}} Result object with success status and optional reason
  */
 export function navigateToSource(snippet) {
   if (!snippet || !snippet.anchor) {
-    return false;
+    return { success: false, reason: 'Snippet has no anchor information' };
   }
   
   const { anchor } = snippet;
@@ -173,8 +170,10 @@ export function navigateToSource(snippet) {
   if (anchor.conversationId) {
     const currentConversationId = getConversationId();
     if (currentConversationId && currentConversationId !== anchor.conversationId) {
-      // Different conversation - could navigate, but for Stage 1, just return false
-      return false;
+      return { 
+        success: false, 
+        reason: 'Source not found in current conversation. The snippet is from a different conversation.' 
+      };
     }
   }
   
@@ -196,7 +195,17 @@ export function navigateToSource(snippet) {
   }
   
   if (!messageBlock) {
-    return false;
+    const currentConversationId = getConversationId();
+    if (anchor.conversationId && currentConversationId && currentConversationId === anchor.conversationId) {
+      return { 
+        success: false, 
+        reason: 'Source message not found. It may have been deleted or the page needs to be scrolled to load it.' 
+      };
+    }
+    return { 
+      success: false, 
+      reason: 'Source not found. The message may be in a different conversation or may have been deleted.' 
+    };
   }
   
   // Apply transient highlight
@@ -215,7 +224,7 @@ export function navigateToSource(snippet) {
     messageBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   
-  return true;
+  return { success: true };
 }
 
 /**
@@ -223,13 +232,5 @@ export function navigateToSource(snippet) {
  * @returns {string|null} Conversation ID or null
  */
 function getConversationId() {
-  const url = window.location.href;
-  
-  const match1 = url.match(/\/c\/([a-f0-9-]+)/);
-  if (match1) return match1[1];
-  
-  const match2 = url.match(/[?&]conversationId=([^&]+)/);
-  if (match2) return match2[1];
-  
-  return null;
+  return getConversationIdFromUrl(window.location.href);
 }

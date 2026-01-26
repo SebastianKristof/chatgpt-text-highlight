@@ -124,6 +124,25 @@ function getConversationIdFromUrl(url) {
   return null;
 }
 
+function getProjectIdFromUrl(url) {
+  if (!url) return null;
+  
+  try {
+    const match = String(url).match(/\/g\/([^/?#]+)/);
+    if (match) {
+      return decodeURIComponent(match[1]);
+    }
+  } catch (error) {
+    console.warn('Failed to parse projectId from URL:', error);
+  }
+  
+  return null;
+}
+
+function getCurrentProjectId() {
+  return getProjectIdFromUrl(window.location.href);
+}
+
 function findMessageBlock(node) {
   if (!node) return null;
   let current = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
@@ -192,6 +211,7 @@ function generateSnippetId() {
   return `snippet_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
+// eslint-disable-next-line no-unused-vars
 function buildSnippetFromSelection() {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
@@ -230,6 +250,7 @@ function buildSnippetFromSelection() {
   
   // Use the start message block for anchor (or first one found)
   const messageBlock = startMessageBlock || endMessageBlock;
+  const projectId = getCurrentProjectId();
   
   if (!messageBlock) {
     // No message block found - still create snippet but without anchor
@@ -237,6 +258,7 @@ function buildSnippetFromSelection() {
       id: generateSnippetId(),
       text: finalText,
       conversationId: getConversationId(),
+      projectId,
       anchor: null,
       timestamp: Date.now(),
       truncated
@@ -266,15 +288,16 @@ function buildSnippetFromSelection() {
     selectionEnd
   });
   
-  return {
-    id: generateSnippetId(),
-    text: finalText, // Store markdown version
-    conversationId,
-    anchor,
-    timestamp: Date.now(),
-    truncated
-  };
-}
+    return {
+      id: generateSnippetId(),
+      text: finalText, // Store markdown version
+      conversationId,
+      projectId,
+      anchor,
+      timestamp: Date.now(),
+      truncated
+    };
+  }
 
 function buildSnippetFromRangeSnapshot({ selectionText, markdownText, range }) {
   if (!range) return null;
@@ -306,6 +329,7 @@ function buildSnippetFromRangeSnapshot({ selectionText, markdownText, range }) {
   const messageBlock = startMessageBlock || endMessageBlock;
   
   const conversationId = getConversationId();
+  const projectId = getCurrentProjectId();
   
   if (!messageBlock) {
     // No message block found - still create snippet but without anchor
@@ -313,6 +337,7 @@ function buildSnippetFromRangeSnapshot({ selectionText, markdownText, range }) {
       id: generateSnippetId(),
       text: finalText,
       conversationId,
+      projectId,
       anchor: null,
       timestamp: Date.now(),
       truncated
@@ -344,6 +369,7 @@ function buildSnippetFromRangeSnapshot({ selectionText, markdownText, range }) {
     id: generateSnippetId(),
     text: finalText,
     conversationId,
+    projectId,
     anchor,
     timestamp: Date.now(),
     truncated
@@ -388,7 +414,7 @@ function findMessageByPrefix(selectionPrefix) {
   return null;
 }
 
-function applyTransientHighlight(element, startOffset, endOffset) {
+function applyTransientHighlight(element, _startOffset, _endOffset) {
   if (!element) return;
   
   // Descoped: Just scroll to the message without DOM manipulation
@@ -440,7 +466,7 @@ function navigateToSource(snippet, options = {}) {
       anchor.conversationId &&
       (!currentConversationId || currentConversationId !== anchor.conversationId)
     ) {
-      let conversationUrl = `https://chatgpt.com/c/${anchor.conversationId}`;
+      let conversationUrl = `${window.location.origin}/c/${anchor.conversationId}`;
       try {
         const url = new URL(conversationUrl);
         if (snippet.id) {
@@ -631,11 +657,12 @@ function elementToMarkdown(element) {
             markdown += text;
           }
           break;
-        case 'pre':
+        case 'pre': {
           const codeElement = node.querySelector('code');
           const codeText = codeElement ? codeElement.textContent : node.textContent;
           markdown += '\n```\n' + codeText.trim() + '\n```\n';
           break;
+        }
         case 'h1':
           markdown += `# ${text.trim()}\n\n`;
           break;
@@ -646,7 +673,7 @@ function elementToMarkdown(element) {
           markdown += `### ${text.trim()}\n\n`;
           break;
         case 'ul':
-        case 'ol':
+        case 'ol': {
           const items = Array.from(node.querySelectorAll('li'));
           items.forEach((item, index) => {
             const itemText = elementToMarkdown(item).trim();
@@ -660,7 +687,8 @@ function elementToMarkdown(element) {
             markdown += '\n';
           }
           break;
-        case 'li':
+        }
+        case 'li': {
           // Handle nested lists and content
           const childNodes = Array.from(node.childNodes);
           let liContent = '';
@@ -679,12 +707,14 @@ function elementToMarkdown(element) {
           }
           markdown += liContent.trim();
           break;
-        case 'blockquote':
+        }
+        case 'blockquote': {
           const lines = text.split('\n').filter(l => l.trim());
           if (lines.length > 0) {
             markdown += lines.map(l => `> ${l.trim()}`).join('\n') + '\n\n';
           }
           break;
+        }
         default:
           markdown += text;
       }
@@ -720,6 +750,9 @@ function cleanupMarkdown(text) {
 // ============================================================================
 
 const CONTAINER_ID = 'ce-root';
+const FAB_DRAG_PADDING = 12;
+const FAB_DRAG_THRESHOLD = 4;
+const FAB_LONG_PRESS_MS = 180;
 
 function createContainer() {
   let container = document.getElementById(CONTAINER_ID);
@@ -731,15 +764,231 @@ function createContainer() {
   return container;
 }
 
-function createFAB(count, onClick) {
+let fabDragState = {
+  active: false,
+  longPressReady: false,
+  moved: false,
+  startX: 0,
+  startY: 0,
+  startLeft: 0,
+  startTop: 0,
+  width: 0,
+  height: 0,
+  longPressTimer: null
+};
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getChatHeaderBottom() {
+  const header = document.querySelector('header');
+  if (!header) return 0;
+  const rect = header.getBoundingClientRect();
+  return Math.max(0, rect.bottom || 0);
+}
+
+function positionPanel(panelEl) {
+  if (!panelEl) return;
+  const padding = 16;
+  const headerBottom = getChatHeaderBottom();
+  const top = headerBottom + padding;
+  const maxHeight = Math.max(240, window.innerHeight - top - padding);
+  panelEl.style.setProperty('--ce-panel-top', `${top}px`);
+  panelEl.style.setProperty('--ce-panel-right', `${padding}px`);
+  panelEl.style.setProperty('--ce-panel-max-height', `${maxHeight}px`);
+}
+
+function applyContainerPosition(left, top) {
+  container.style.left = `${left}px`;
+  container.style.top = `${top}px`;
+  container.style.right = 'auto';
+  container.style.bottom = 'auto';
+  container.style.transform = 'none';
+}
+
+function enableFabDragging(fabEl) {
+  fabEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const rect = container.getBoundingClientRect();
+    fabDragState.active = true;
+    fabDragState.longPressReady = false;
+    fabDragState.moved = false;
+    fabDragState.startX = e.clientX;
+    fabDragState.startY = e.clientY;
+    fabDragState.startLeft = rect.left;
+    fabDragState.startTop = rect.top;
+    fabDragState.width = rect.width;
+    fabDragState.height = rect.height;
+    if (fabDragState.longPressTimer) {
+      clearTimeout(fabDragState.longPressTimer);
+    }
+    fabDragState.longPressTimer = setTimeout(() => {
+      fabDragState.longPressReady = true;
+      fabEl.classList.add('ce-fab-dragging');
+    }, FAB_LONG_PRESS_MS);
+    fabEl.setPointerCapture?.(e.pointerId);
+  });
+  
+  fabEl.addEventListener('pointermove', (e) => {
+    if (!fabDragState.active) return;
+    if (!fabDragState.longPressReady) return;
+    const dx = e.clientX - fabDragState.startX;
+    const dy = e.clientY - fabDragState.startY;
+    if (!fabDragState.moved && Math.hypot(dx, dy) < FAB_DRAG_THRESHOLD) {
+      return;
+    }
+    fabDragState.moved = true;
+    e.preventDefault();
+    
+    const maxLeft = window.innerWidth - fabDragState.width - FAB_DRAG_PADDING;
+    const maxTop = window.innerHeight - fabDragState.height - FAB_DRAG_PADDING;
+    const nextLeft = clamp(fabDragState.startLeft + dx, FAB_DRAG_PADDING, maxLeft);
+    const nextTop = clamp(fabDragState.startTop + dy, FAB_DRAG_PADDING, maxTop);
+    applyContainerPosition(nextLeft, nextTop);
+  });
+  
+  const endDrag = (e) => {
+    if (!fabDragState.active) return;
+    fabDragState.active = false;
+    fabDragState.longPressReady = false;
+    fabEl.releasePointerCapture?.(e.pointerId);
+    if (fabDragState.longPressTimer) {
+      clearTimeout(fabDragState.longPressTimer);
+      fabDragState.longPressTimer = null;
+    }
+    fabEl.classList.remove('ce-fab-dragging');
+  };
+  
+  fabEl.addEventListener('pointerup', endDrag);
+  fabEl.addEventListener('pointercancel', endDrag);
+}
+
+/**
+ * Formats a timestamp with date, weekday, and relative markers.
+ * @param {Date} date - Date to format
+ * @returns {string} Formatted timestamp string
+ */
+function formatTimestamp(date) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const snippetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  
+  const daysDiff = Math.floor((today - snippetDate) / (1000 * 60 * 60 * 24));
+  
+  // Format time
+  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
+  // Format weekday
+  const weekday = date.toLocaleDateString([], { weekday: 'short' });
+  
+  // Format date (month and day)
+  const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  
+  // Base format: Time, Weekday, Date
+  let formatted = `${timeStr}, ${weekday}, ${dateStr}`;
+  
+  // Add relative marker in parentheses (always shown)
+  if (daysDiff === 0) {
+    formatted += ' (Today)';
+  } else if (daysDiff === 1) {
+    formatted += ' (Yesterday)';
+  } else {
+    formatted += ` (${daysDiff} days ago)`;
+  }
+  
+  return formatted;
+}
+
+function createFAB(count, onClick, onToggleMinimized) {
   const fab = document.createElement('button');
-  fab.className = 'ce-fab';
+  const isMinimized = state.settings.minimizedMode || false;
+  fab.className = isMinimized ? 'ce-fab ce-fab-minimized' : 'ce-fab';
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
-  fab.innerHTML = `
-    <span class="ce-fab-text">Collected</span>
-    <span class="ce-fab-count">${count}</span>
-  `;
-  fab.addEventListener('click', onClick);
+  
+  // Create chevron as a span (not a button to avoid nested button issues)
+  const chevronBtn = document.createElement('span');
+  chevronBtn.className = 'ce-fab-chevron';
+  chevronBtn.setAttribute('role', 'button');
+  chevronBtn.setAttribute('tabindex', '0');
+  if (isMinimized) {
+    chevronBtn.textContent = '‹';
+    chevronBtn.setAttribute('aria-label', 'Expand');
+    chevronBtn.title = 'Expand';
+  } else {
+    chevronBtn.textContent = '›';
+    chevronBtn.setAttribute('aria-label', 'Minimize');
+    chevronBtn.title = 'Minimize';
+  }
+  
+  // Chevron click handler - always toggles minimize/maximize
+  // Use mousedown to intercept before the FAB's click handler
+  chevronBtn.addEventListener('mousedown', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    // Reset drag state to prevent the FAB from "running away"
+    fabDragState.active = false;
+    fabDragState.longPressReady = false;
+    fabDragState.moved = false;
+    if (fabDragState.longPressTimer) {
+      clearTimeout(fabDragState.longPressTimer);
+      fabDragState.longPressTimer = null;
+    }
+    if (onToggleMinimized) {
+      await onToggleMinimized();
+    }
+  });
+  
+  // Also handle keyboard for accessibility
+  chevronBtn.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.stopPropagation();
+      e.preventDefault();
+      if (onToggleMinimized) {
+        await onToggleMinimized();
+      }
+    }
+  });
+  
+  if (isMinimized) {
+    // Minimized mode: chevron (pointing left to expand) + count
+    fab.innerHTML = `
+      <span class="ce-fab-count">${count}</span>
+    `;
+    if (count === 0) {
+      // If count is 0, make semi-transparent
+      fab.style.opacity = '0.5';
+    } else {
+      fab.style.opacity = '';
+    }
+    fab.title = 'Collected snippets';
+    // Insert chevron at the beginning (left side)
+    fab.insertBefore(chevronBtn, fab.firstChild);
+  } else {
+    // Full mode: chevron on left (pointing right to minimize) + text + count
+    fab.innerHTML = `
+      <span class="ce-fab-text">Collected</span>
+      <span class="ce-fab-count">${count}</span>
+    `;
+    // Insert chevron at the beginning (left side)
+    fab.insertBefore(chevronBtn, fab.firstChild);
+  }
+  
+  fab.addEventListener('click', (e) => {
+    // Don't toggle panel if clicking chevron
+    if (e.target === chevronBtn || chevronBtn.contains(e.target)) {
+      e.preventDefault();
+      return;
+    }
+    if (fabDragState.moved) {
+      fabDragState.moved = false;
+      e.preventDefault();
+      return;
+    }
+    // Clicking the rest of the FAB opens the panel
+    onClick(e);
+  });
+  enableFabDragging(fab);
   return fab;
 }
 
@@ -773,8 +1022,16 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   const meta = document.createElement('div');
   meta.className = 'ce-snippet-meta';
   const timestamp = new Date(snippet.timestamp);
-  const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  meta.textContent = timeStr;
+  const timeStr = formatTimestamp(timestamp);
+  const timeEl = document.createElement('span');
+  timeEl.textContent = timeStr;
+  meta.appendChild(timeEl);
+  if (snippet.duplicateIndex && snippet.duplicateIndex > 1) {
+    const dup = document.createElement('span');
+    dup.className = 'ce-duplicate-badge';
+    dup.textContent = `Duplicate #${snippet.duplicateIndex}`;
+    meta.appendChild(dup);
+  }
   
   const actions = document.createElement('div');
   actions.className = 'ce-snippet-actions';
@@ -790,7 +1047,7 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   });
   
   const removeBtn = document.createElement('button');
-  removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small';
+  removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small ce-btn-remove';
   removeBtn.setAttribute('aria-label', 'Remove snippet');
   removeBtn.innerHTML = '×';
   removeBtn.addEventListener('click', async (e) => {
@@ -808,9 +1065,17 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopy, onT
   return item;
 }
 
+// Virtualization state
+let virtualizationState = {
+  itemHeight: 120, // Estimated height per item (will be measured)
+  buffer: 5, // Number of items to render outside viewport
+  measuredHeight: null
+};
+
 function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds }) {
   const list = document.createElement('div');
   list.className = 'ce-snippet-list';
+  
   if (snippets.length === 0) {
     const emptyState = document.createElement('div');
     emptyState.className = 'ce-empty-state';
@@ -818,20 +1083,222 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
     list.appendChild(emptyState);
     return list;
   }
-  snippets.forEach((snippet, index) => {
-    const isSelected = selectedIds && selectedIds.has(snippet.id);
-    const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, isSelected);
-    list.appendChild(item);
+  
+  // Store snippets data for virtualization
+  list._snippets = snippets;
+  list._onRemove = onRemove;
+  list._onSnippetClick = onSnippetClick;
+  list._onCopySnippet = onCopySnippet;
+  list._onToggleSelect = onToggleSelect;
+  list._selectedIds = selectedIds;
+  
+  // Virtualization container
+  const virtualContainer = document.createElement('div');
+  virtualContainer.className = 'ce-virtual-container';
+  list.appendChild(virtualContainer);
+  
+  // Initial render
+  updateVirtualizedList(list);
+  
+  // Throttled scroll handler
+  let scrollTimeout;
+  list.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      updateVirtualizedList(list);
+    }, 10);
   });
+  
+  // Resize observer for window resize
+  if (window.ResizeObserver) {
+    const resizeObserver = new ResizeObserver(() => {
+      updateVirtualizedList(list);
+    });
+    resizeObserver.observe(list);
+  }
+  
   return list;
 }
 
-function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, snippetCount, selectedCount, allSelected, searchQuery }) {
+function updateVirtualizedList(list) {
+  const snippets = list._snippets;
+  if (!snippets || snippets.length === 0) return;
+  
+  const container = list.querySelector('.ce-virtual-container');
+  if (!container) return;
+  
+  const containerHeight = list.clientHeight || list.offsetHeight;
+  const scrollTop = list.scrollTop || 0;
+  
+  // If container height is 0, render all items (not yet measured)
+  if (containerHeight === 0) {
+    container.innerHTML = '';
+    snippets.forEach((snippet, index) => {
+      const isSelected = list._selectedIds && list._selectedIds.has(snippet.id);
+      const item = createSnippetItem(
+        snippet,
+        index,
+        list._onRemove,
+        list._onSnippetClick,
+        list._onCopySnippet,
+        list._onToggleSelect,
+        isSelected
+      );
+      container.appendChild(item);
+    });
+    // Measure height after render
+    requestAnimationFrame(() => {
+      if (container.children.length > 0) {
+        const firstItem = container.children[0];
+        if (firstItem && firstItem.offsetHeight) {
+          virtualizationState.measuredHeight = firstItem.offsetHeight;
+          virtualizationState.itemHeight = firstItem.offsetHeight;
+          // Re-render with virtualization
+          updateVirtualizedList(list);
+        }
+      }
+    });
+    return;
+  }
+  
+  // Measure item height on first render if not measured
+  if (!virtualizationState.measuredHeight && container.children.length > 0) {
+    const firstItem = container.querySelector('.ce-snippet-item');
+    if (firstItem && firstItem.offsetHeight) {
+      virtualizationState.measuredHeight = firstItem.offsetHeight;
+      virtualizationState.itemHeight = firstItem.offsetHeight;
+    }
+  }
+  
+  const itemHeight = virtualizationState.measuredHeight || virtualizationState.itemHeight;
+  const buffer = virtualizationState.buffer;
+  
+  // Calculate visible range
+  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - buffer);
+  const endIndex = Math.min(
+    snippets.length - 1,
+    Math.ceil((scrollTop + containerHeight) / itemHeight) + buffer
+  );
+  
+  // Store previous range to detect changes
+  const prevStartIndex = list._startIndex ?? startIndex;
+  const prevEndIndex = list._endIndex ?? endIndex;
+  
+  // Only update if range actually changed
+  const rangeChanged = prevStartIndex !== startIndex || prevEndIndex !== endIndex;
+  
+  // Store current range
+  list._startIndex = startIndex;
+  list._endIndex = endIndex;
+  
+  // If range hasn't changed and items exist, skip update to preserve hover states
+  if (!rangeChanged && container.children.length > 0) {
+    // Still need to update selection states for existing items
+    const existingItems = container.querySelectorAll('.ce-snippet-item');
+    existingItems.forEach((item, idx) => {
+      const actualIndex = startIndex + idx;
+      if (actualIndex >= startIndex && actualIndex <= endIndex) {
+        const snippet = snippets[actualIndex];
+        if (snippet) {
+          const isSelected = list._selectedIds && list._selectedIds.has(snippet.id);
+          const checkbox = item.querySelector('.ce-snippet-checkbox');
+          if (checkbox) {
+            checkbox.checked = isSelected || false;
+          }
+          if (isSelected) {
+            item.classList.add('ce-snippet-selected');
+          } else {
+            item.classList.remove('ce-snippet-selected');
+          }
+        }
+      }
+    });
+    return;
+  }
+  
+  // Range changed or initial render - rebuild
+  // Clear container
+  container.innerHTML = '';
+  
+  // Add top spacer
+  const topSpacer = document.createElement('div');
+  topSpacer.className = 'ce-virtual-spacer';
+  topSpacer.style.height = `${startIndex * itemHeight}px`;
+  container.appendChild(topSpacer);
+  
+  // Render visible items
+  for (let i = startIndex; i <= endIndex; i++) {
+    const snippet = snippets[i];
+    if (!snippet) continue;
+    
+    const isSelected = list._selectedIds && list._selectedIds.has(snippet.id);
+    const item = createSnippetItem(
+      snippet,
+      i,
+      list._onRemove,
+      list._onSnippetClick,
+      list._onCopySnippet,
+      list._onToggleSelect,
+      isSelected
+    );
+    container.appendChild(item);
+  }
+  
+  // Add bottom spacer
+  const bottomSpacer = document.createElement('div');
+  bottomSpacer.className = 'ce-virtual-spacer';
+  bottomSpacer.style.height = `${(snippets.length - endIndex - 1) * itemHeight}px`;
+  container.appendChild(bottomSpacer);
+}
+
+function buildScopeOptions(currentProjectId) {
+  return [
+    { value: 'thread', label: 'Thread' },
+    ...(currentProjectId ? [{ value: 'project', label: 'Project' }] : []),
+    { value: 'all', label: 'All' }
+  ];
+}
+
+function createScopeToggle({ onScopeChange, currentScope, currentProjectId }) {
+  const options = buildScopeOptions(currentProjectId);
+  const btn = document.createElement('button');
+  btn.className = 'ce-scope-toggle';
+  btn.setAttribute('type', 'button');
+  btn.dataset.scope = currentScope || 'thread';
+  const current = options.find(opt => opt.value === (currentScope || 'thread')) || options[0];
+  btn.textContent = current.label;
+  btn.setAttribute('aria-label', `Search scope: ${current.label}`);
+  btn.title = `Search scope: ${current.label}`;
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!onScopeChange) return;
+    const nextIndex = (options.findIndex(opt => opt.value === btn.dataset.scope) + 1) % options.length;
+    onScopeChange(options[nextIndex].value);
+  });
+  return btn;
+}
+
+function createPanelHeader({ onCopy, onCopyAll, onClear: _onClear, onClearSelected, onClose, onManage, onSelectAll, onSearch, onToggleTheme, onSortToggle, currentTheme, snippetCount, selectedCount, allSelected, searchQuery, totalCount, sortOrder, onScopeChange, currentScope, currentProjectId }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
+  
+  // Title row with close icon
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-panel-title-row';
+  
   const title = document.createElement('h2');
   title.className = 'ce-panel-title';
   title.textContent = 'Collected Snippets';
+  
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ce-btn ce-btn-icon';
+  closeBtn.setAttribute('aria-label', 'Close panel');
+  closeBtn.innerHTML = '×';
+  closeBtn.addEventListener('click', onClose);
+  
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeBtn);
   
   // Search box
   const searchContainer = document.createElement('div');
@@ -863,52 +1330,175 @@ function createPanelHeader({ onCopy, onClear, onClose, onSelectAll, onSearch, sn
   
   searchWrapper.appendChild(searchInput);
   searchWrapper.appendChild(clearSearchBtn);
+  if (searchQuery && searchQuery.trim() && onScopeChange) {
+    const scopeToggle = createScopeToggle({
+      onScopeChange,
+      currentScope: currentScope || 'thread',
+      currentProjectId: currentProjectId || null
+    });
+    searchWrapper.appendChild(scopeToggle);
+  }
   searchContainer.appendChild(searchWrapper);
   
-  const actions = document.createElement('div');
-  actions.className = 'ce-panel-actions';
+  // Button bar (replaces actions row)
+  const buttonBar = document.createElement('div');
+  buttonBar.className = 'ce-button-bar';
   
-  const selectAllBtn = document.createElement('button');
-  selectAllBtn.className = 'ce-btn';
-  selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
-  selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
-  selectAllBtn.addEventListener('click', onSelectAll);
-  selectAllBtn.disabled = snippetCount === 0;
+  // Select All Checkbox
+  const selectAllWrapper = document.createElement('label');
+  selectAllWrapper.className = 'ce-select-all-wrapper';
+  const selectAllCheckbox = document.createElement('input');
+  selectAllCheckbox.type = 'checkbox';
+  selectAllCheckbox.className = 'ce-select-all-checkbox';
+  selectAllCheckbox.setAttribute('aria-label', 'Select all snippets');
   
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'ce-btn ce-btn-secondary';
-  if (selectedCount > 0) {
-    copyBtn.textContent = `Copy (${selectedCount})`;
-    copyBtn.setAttribute('aria-label', `Copy ${selectedCount} selected snippets`);
+  // Determine checkbox state
+  const hasSelectedItems = selectedCount > 0;
+  const isIndeterminate = hasSelectedItems && !allSelected && snippetCount > 0;
+  
+  if (allSelected && snippetCount > 0) {
+    selectAllCheckbox.checked = true;
+    selectAllCheckbox.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
+    selectAllWrapper.title = `Deselect all ${selectedCount} snippets`;
+  } else if (isIndeterminate) {
+    selectAllCheckbox.indeterminate = true;
+    selectAllCheckbox.setAttribute('aria-label', `${selectedCount} of ${snippetCount} selected`);
+    selectAllWrapper.title = `${selectedCount} of ${snippetCount} selected`;
   } else {
-    copyBtn.textContent = 'Copy All';
-    copyBtn.setAttribute('aria-label', 'Copy all snippets');
+    selectAllCheckbox.checked = false;
+    selectAllCheckbox.setAttribute('aria-label', `Select all ${snippetCount} snippets`);
+    selectAllWrapper.title = `Select all ${snippetCount} snippets`;
   }
-  copyBtn.addEventListener('click', onCopy);
-  copyBtn.disabled = snippetCount === 0;
   
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'ce-btn ce-btn-secondary';
-  clearBtn.textContent = 'Clear';
-  clearBtn.setAttribute('aria-label', 'Clear all snippets');
-  clearBtn.addEventListener('click', async () => {
-    await onClear();
+  selectAllCheckbox.disabled = snippetCount === 0;
+  selectAllCheckbox.addEventListener('change', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelectAll();
   });
-  clearBtn.disabled = snippetCount === 0;
   
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'ce-btn ce-btn-icon';
-  closeBtn.setAttribute('aria-label', 'Close panel');
-  closeBtn.innerHTML = '×';
-  closeBtn.addEventListener('click', onClose);
+  selectAllWrapper.appendChild(selectAllCheckbox);
+  buttonBar.appendChild(selectAllWrapper);
   
-  actions.appendChild(selectAllBtn);
-  actions.appendChild(copyBtn);
-  actions.appendChild(clearBtn);
-  actions.appendChild(closeBtn);
-  header.appendChild(title);
+  // Copy Selected Button
+  const copySelectedBtn = document.createElement('button');
+  copySelectedBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-copy-selected';
+  copySelectedBtn.innerHTML = '📋';
+  copySelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Copy ${selectedCount} selected snippets` : 'Copy selected');
+  copySelectedBtn.title = selectedCount > 0 ? `Copy ${selectedCount} selected` : 'Copy selected';
+  copySelectedBtn.disabled = selectedCount === 0;
+  copySelectedBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onCopy();
+  });
+  buttonBar.appendChild(copySelectedBtn);
+  
+  // Clear Selected Button
+  const clearSelectedBtn = document.createElement('button');
+  clearSelectedBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-clear-selected';
+  clearSelectedBtn.innerHTML = '🗑️';
+  clearSelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Clear ${selectedCount} selected snippets` : 'Clear selected');
+  clearSelectedBtn.title = selectedCount > 0 ? `Clear ${selectedCount} selected` : 'Clear selected';
+  clearSelectedBtn.disabled = selectedCount === 0;
+  clearSelectedBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onClearSelected) {
+      await onClearSelected();
+    }
+  });
+  buttonBar.appendChild(clearSelectedBtn);
+  
+  // Visual separator (optional)
+  const separator = document.createElement('div');
+  separator.className = 'ce-button-bar-separator';
+  buttonBar.appendChild(separator);
+  
+  // Copy All Button
+  const copyAllBtn = document.createElement('button');
+  copyAllBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-copy-all';
+  copyAllBtn.innerHTML = '📄';
+  copyAllBtn.setAttribute('aria-label', 'Copy all snippets');
+  copyAllBtn.title = 'Copy all snippets';
+  copyAllBtn.disabled = snippetCount === 0;
+  copyAllBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onCopyAll) {
+      onCopyAll();
+    }
+  });
+  buttonBar.appendChild(copyAllBtn);
+  
+  // Import/Export Button
+  const manageBtn = document.createElement('button');
+  manageBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-manage';
+  manageBtn.innerHTML = '↕️';
+  manageBtn.setAttribute('aria-label', 'Import or export snippets');
+  manageBtn.title = 'Import/Export';
+  manageBtn.addEventListener('click', onManage);
+  buttonBar.appendChild(manageBtn);
+  
+  // Theme Toggle Button
+  if (onToggleTheme && currentTheme) {
+    const themeIcons = { auto: '🌓', light: '☀', dark: '🌙' };
+    const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+    const themeBtn = document.createElement('button');
+    themeBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-theme';
+    themeBtn.innerHTML = themeIcons[currentTheme] || '🌓';
+    themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
+    themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
+    themeBtn.addEventListener('click', onToggleTheme);
+    buttonBar.appendChild(themeBtn);
+  }
+  
+  // Sort Toggle Button
+  if (onSortToggle) {
+    const sortBtn = document.createElement('button');
+    sortBtn.className = 'ce-btn ce-btn-icon ce-button-bar-btn ce-btn-sort';
+    sortBtn.innerHTML = sortOrder === 'desc' ? '↓' : '↑';
+    sortBtn.setAttribute('aria-label', `Sort: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`);
+    sortBtn.title = `Sort: ${sortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'}`;
+    sortBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (onSortToggle) onSortToggle();
+    };
+    buttonBar.appendChild(sortBtn);
+  }
+  
+  // Snippet Counter (positioned on the right)
+  const snippetCounter = document.createElement('div');
+  snippetCounter.className = 'ce-snippet-counter';
+  // Calculate counts
+  const hasSearchQuery = searchQuery && searchQuery.trim();
+  const visibleSnippetCount = snippetCount; // Already filtered by search
+  const totalSnippetCount = totalCount !== undefined ? totalCount : snippetCount;
+  const hasSelectedSnippets = selectedCount > 0;
+  
+  // Build counter text based on state
+  let counterText = '';
+  if (hasSelectedSnippets && hasSearchQuery) {
+    // Selected + Searched: show selected / found / total
+    counterText = `${selectedCount} / ${visibleSnippetCount} / ${totalSnippetCount}`;
+  } else if (hasSelectedSnippets) {
+    // Selected only: show selected / total
+    counterText = `${selectedCount} / ${totalSnippetCount}`;
+  } else if (hasSearchQuery && visibleSnippetCount !== totalSnippetCount) {
+    // Searched only: show found / total
+    counterText = `${visibleSnippetCount} / ${totalSnippetCount}`;
+  } else {
+    // None selected, no search: show total
+    counterText = `${totalSnippetCount}`;
+  }
+  snippetCounter.textContent = counterText;
+  snippetCounter.setAttribute('aria-label', `Snippet count: ${counterText}`);
+  buttonBar.appendChild(snippetCounter);
+  
+  header.appendChild(titleRow);
   header.appendChild(searchContainer);
-  header.appendChild(actions);
+  header.appendChild(buttonBar);
   return header;
 }
 
@@ -919,28 +1509,51 @@ function createPanelFooter() {
   return footer;
 }
 
-function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery }) {
+function createPanel({ snippets, onCopy, onCopyAll, onClear, onClearSelected, onClose, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, onManage, onToggleTheme, onSortToggle, currentTheme, selectedIds, searchQuery, totalCount, sortOrder, onScopeChange, currentScope, currentProjectId }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
-  const allSelected = selectedIds && selectedIds.size === snippets.length && snippets.length > 0;
+  // Check if all visible snippets are selected
+  const snippetIds = new Set(snippets.map(s => s.id));
+  const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
+  // Count only selected snippets that are visible (not all selected snippets across all conversations)
+  const visibleSelectedCount = selectedIds ? snippets.filter(s => selectedIds.has(s.id)).length : 0;
   const header = createPanelHeader({ 
-    onCopy, 
-    onClear, 
+    onCopy,
+    onCopyAll,
+    onClear,
+    onClearSelected,
     onClose, 
+    onManage,
     onSelectAll,
     onSearch,
+    onToggleTheme,
+    onSortToggle,
+    currentTheme,
     snippetCount: snippets.length, 
-    selectedCount: selectedIds ? selectedIds.size : 0,
+    selectedCount: visibleSelectedCount,
     allSelected,
-    searchQuery
+    searchQuery,
+    totalCount,
+    sortOrder,
+    onScopeChange,
+    currentScope,
+    currentProjectId
   });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds });
   const footer = createPanelFooter();
   panel.appendChild(header);
   panel.appendChild(list);
   panel.appendChild(footer);
+  
+  // Update virtualization after list is in DOM (for proper height measurement)
+  if (list._snippets && list._snippets.length > 0) {
+    requestAnimationFrame(() => {
+      updateVirtualizedList(list);
+    });
+  }
+  
   return panel;
 }
 
@@ -1020,7 +1633,13 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
     
     const p = document.createElement('p');
     p.className = 'ce-modal-message';
-    p.textContent = message || '';
+    // Support multi-line messages with proper line breaks
+    if (message && message.includes('\n')) {
+      p.style.whiteSpace = 'pre-line';
+      p.textContent = message;
+    } else {
+      p.textContent = message || '';
+    }
     
     body.appendChild(h);
     body.appendChild(p);
@@ -1031,12 +1650,18 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'ce-btn';
     cancelBtn.textContent = cancelText;
-    cancelBtn.addEventListener('click', () => closeActiveModal(false));
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeActiveModal(false);
+    });
     
     const okBtn = document.createElement('button');
     okBtn.className = danger ? 'ce-btn ce-btn-danger' : 'ce-btn ce-btn-secondary';
     okBtn.textContent = confirmText;
-    okBtn.addEventListener('click', () => closeActiveModal(true));
+    okBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeActiveModal(true);
+    });
     
     actions.appendChild(cancelBtn);
     actions.appendChild(okBtn);
@@ -1060,7 +1685,10 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
     
     overlay.addEventListener('mousedown', (e) => {
       // Click outside closes (cancel)
-      if (e.target === overlay) closeActiveModal(false);
+      if (e.target === overlay) {
+        e.stopPropagation();
+        closeActiveModal(false);
+      }
     });
     
     document.addEventListener('keydown', onKeyDown, { capture: true });
@@ -1079,6 +1707,364 @@ function showConfirmModal({ title, message, confirmText = 'OK', cancelText = 'Ca
   });
 }
 
+async function showBranchCopyPrompt(fromConversationId, toConversationId, snippetCount) {
+  return new Promise((resolve) => {
+    // Check if user has set "Don't ask again" preference
+    const preferenceKey = `autoCopyOnBranch_${fromConversationId}->${toConversationId}`;
+    chrome.storage.local.get([preferenceKey, 'autoCopyOnBranch']).then((result) => {
+      const dontAskAgain = result[preferenceKey] || result.autoCopyOnBranch;
+      if (dontAskAgain) {
+        // User said don't ask again, auto-copy
+        resolve(true);
+        return;
+      }
+      
+      // Show modal with checkbox
+      if (activeModalOverlay) {
+        closeActiveModal(false);
+      }
+      let resolveCalled = false;
+      const modalResolve = (value) => {
+        if (resolveCalled) return;
+        resolveCalled = true;
+        resolve(value);
+      };
+      activeModalResolve = modalResolve;
+      
+      const overlay = document.createElement('div');
+      overlay.className = 'ce-modal-overlay';
+      overlay.setAttribute('role', 'presentation');
+      
+      const modal = document.createElement('div');
+      modal.className = 'ce-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.setAttribute('aria-label', 'Copy snippets from parent thread?');
+      
+      const body = document.createElement('div');
+      body.className = 'ce-modal-body';
+      
+      const h = document.createElement('h3');
+      h.className = 'ce-modal-title';
+      h.textContent = 'Copy snippets from parent thread?';
+      
+      const p = document.createElement('p');
+      p.className = 'ce-modal-message';
+      p.textContent = `Copy ${snippetCount} snippet${snippetCount !== 1 ? 's' : ''} from the parent thread to this conversation?`;
+      
+      const checkboxWrapper = document.createElement('label');
+      checkboxWrapper.className = 'ce-modal-checkbox-wrapper';
+      checkboxWrapper.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-top: 16px; cursor: pointer;';
+      
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.id = 'ce-branch-copy-dont-ask';
+      
+      const checkboxLabel = document.createElement('span');
+      checkboxLabel.textContent = "Don't ask again";
+      checkboxLabel.style.cssText = 'font-size: 14px; color: var(--ce-text-secondary, #8a8a8a);';
+      
+      checkboxWrapper.appendChild(checkbox);
+      checkboxWrapper.appendChild(checkboxLabel);
+      
+      body.appendChild(h);
+      body.appendChild(p);
+      body.appendChild(checkboxWrapper);
+      
+      const actions = document.createElement('div');
+      actions.className = 'ce-modal-actions';
+      
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'ce-btn';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeActiveModal(false);
+        modalResolve(false);
+      });
+      
+      const confirmBtn = document.createElement('button');
+      confirmBtn.className = 'ce-btn ce-btn-secondary';
+      confirmBtn.textContent = 'Copy';
+      confirmBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const dontAsk = checkbox.checked;
+        if (dontAsk) {
+          // Store preference
+          const prefKey = `autoCopyOnBranch_${fromConversationId}->${toConversationId}`;
+          await chrome.storage.local.set({ [prefKey]: true });
+        }
+        closeActiveModal(true);
+        modalResolve(true);
+      });
+      
+      actions.appendChild(cancelBtn);
+      actions.appendChild(confirmBtn);
+      
+      modal.appendChild(body);
+      modal.appendChild(actions);
+      overlay.appendChild(modal);
+      
+      const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeActiveModal(false);
+          modalResolve(false);
+        }
+        if (e.key === 'Enter') {
+          if (document.activeElement === cancelBtn) return;
+          e.preventDefault();
+          confirmBtn.click();
+        }
+      };
+      
+      overlay.addEventListener('mousedown', (e) => {
+        if (e.target === overlay) {
+          e.stopPropagation();
+          closeActiveModal(false);
+          modalResolve(false);
+        }
+      });
+      
+      document.addEventListener('keydown', onKeyDown, { capture: true });
+      activeModalCleanup = () => {
+        document.removeEventListener('keydown', onKeyDown, { capture: true });
+      };
+      
+      document.body.appendChild(overlay);
+      activeModalOverlay = overlay;
+      
+      requestAnimationFrame(() => {
+        modal.classList.add('ce-modal-show');
+        cancelBtn.focus();
+      });
+    });
+  });
+}
+
+function createImportExportModal({ snippetCount, onClose, onExportJson, onExportMarkdown, onPreview, onConfirm }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'ce-modal-overlay ce-extension';
+  overlay.setAttribute('role', 'presentation');
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      e.stopPropagation();
+      onClose();
+    }
+  });
+
+  const modal = document.createElement('div');
+  modal.className = 'ce-modal ce-modal-show';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Import and export');
+
+  const body = document.createElement('div');
+  body.className = 'ce-modal-body';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-modal-title-row';
+
+  const title = document.createElement('h3');
+  title.className = 'ce-modal-title';
+  title.textContent = 'Import / Export';
+
+  const closeIcon = document.createElement('button');
+  closeIcon.className = 'ce-btn ce-btn-icon';
+  closeIcon.setAttribute('aria-label', 'Close import/export');
+  closeIcon.innerHTML = '×';
+  closeIcon.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClose();
+  });
+
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeIcon);
+
+  const message = document.createElement('p');
+  message.className = 'ce-modal-message';
+  message.textContent = 'Export your snippets as JSON or Markdown, or import a JSON backup.';
+
+  const exportSection = document.createElement('div');
+  exportSection.className = 'ce-modal-section';
+
+  const exportLabel = document.createElement('div');
+  exportLabel.className = 'ce-modal-label';
+  exportLabel.textContent = 'Export';
+
+  const exportRow = document.createElement('div');
+  exportRow.className = 'ce-modal-row';
+
+  const exportJsonBtn = document.createElement('button');
+  exportJsonBtn.className = 'ce-btn ce-btn-secondary';
+  exportJsonBtn.textContent = 'Export JSON';
+  exportJsonBtn.disabled = snippetCount === 0;
+  exportJsonBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onExportJson();
+  });
+
+  const exportMdBtn = document.createElement('button');
+  exportMdBtn.className = 'ce-btn ce-btn-secondary';
+  exportMdBtn.textContent = 'Export Markdown';
+  exportMdBtn.disabled = snippetCount === 0;
+  exportMdBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onExportMarkdown();
+  });
+
+  exportRow.appendChild(exportJsonBtn);
+  exportRow.appendChild(exportMdBtn);
+  exportSection.appendChild(exportLabel);
+  exportSection.appendChild(exportRow);
+
+  const importSection = document.createElement('div');
+  importSection.className = 'ce-modal-section';
+
+  const importLabel = document.createElement('div');
+  importLabel.className = 'ce-modal-label';
+  importLabel.textContent = 'Import (JSON)';
+
+  const radioGroup = document.createElement('div');
+  radioGroup.className = 'ce-radio-group';
+
+  const mergeLabel = document.createElement('label');
+  mergeLabel.className = 'ce-radio';
+  const mergeInput = document.createElement('input');
+  mergeInput.type = 'radio';
+  mergeInput.name = 'ce-import-mode';
+  mergeInput.checked = true;
+  mergeLabel.appendChild(mergeInput);
+  mergeLabel.append('Merge (skip duplicates)');
+
+  const replaceLabel = document.createElement('label');
+  replaceLabel.className = 'ce-radio';
+  const replaceInput = document.createElement('input');
+  replaceInput.type = 'radio';
+  replaceInput.name = 'ce-import-mode';
+  replaceLabel.appendChild(replaceInput);
+  replaceLabel.append('Replace existing');
+
+  radioGroup.appendChild(mergeLabel);
+  radioGroup.appendChild(replaceLabel);
+
+  const importRow = document.createElement('div');
+  importRow.className = 'ce-modal-row';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+
+  const chooseBtn = document.createElement('button');
+  chooseBtn.className = 'ce-btn ce-btn-secondary';
+  chooseBtn.textContent = 'Choose JSON';
+  chooseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fileInput.click();
+  });
+
+  const fileName = document.createElement('div');
+  fileName.className = 'ce-file-name';
+  fileName.textContent = 'No file selected';
+
+  const status = document.createElement('div');
+  status.className = 'ce-import-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = 'No import yet.';
+
+  const setStatus = (message, type = 'info') => {
+    status.textContent = message;
+    status.classList.remove('is-success', 'is-error');
+    if (type === 'success') status.classList.add('is-success');
+    if (type === 'error') status.classList.add('is-error');
+  };
+
+  const preview = document.createElement('div');
+  preview.className = 'ce-import-preview';
+  preview.textContent = 'Select a JSON file to preview import.';
+
+  const setPreview = (message, type = 'info') => {
+    preview.textContent = message;
+    preview.classList.remove('is-success', 'is-error');
+    if (type === 'success') preview.classList.add('is-success');
+    if (type === 'error') preview.classList.add('is-error');
+  };
+
+  let pendingImport = null;
+  let lastFile = null;
+
+  const setPending = (data) => {
+    pendingImport = data;
+    confirmBtn.disabled = !pendingImport;
+  };
+
+  const runPreview = () => {
+    if (!lastFile) return;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onPreview(lastFile, mode, setStatus, setPreview, setPending);
+  };
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    lastFile = file;
+    fileName.textContent = file.name;
+    runPreview();
+    fileInput.value = '';
+  });
+
+  importRow.appendChild(chooseBtn);
+  importRow.appendChild(fileName);
+
+  importSection.appendChild(importLabel);
+  importSection.appendChild(radioGroup);
+  importSection.appendChild(importRow);
+  importSection.appendChild(status);
+  importSection.appendChild(preview);
+
+  const actions = document.createElement('div');
+  actions.className = 'ce-modal-actions';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'ce-btn ce-btn-secondary';
+  confirmBtn.textContent = 'Confirm import';
+  confirmBtn.disabled = true;
+  confirmBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!pendingImport) return;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onConfirm(pendingImport, mode, setStatus, setPreview, setPending);
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ce-btn ce-btn-secondary';
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClose();
+  });
+
+  actions.appendChild(confirmBtn);
+  actions.appendChild(closeBtn);
+
+  body.appendChild(titleRow);
+  body.appendChild(message);
+  body.appendChild(exportSection);
+  body.appendChild(importSection);
+
+  modal.appendChild(body);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  overlay.appendChild(fileInput);
+
+  mergeInput.addEventListener('change', runPreview);
+  replaceInput.addEventListener('change', runPreview);
+
+  return overlay;
+}
+
 let selectionToolbar = null;
 
 function createSelectionToolbar(selection, range) {
@@ -1089,7 +2075,8 @@ function createSelectionToolbar(selection, range) {
   
   // Create elegant toolbar near the FAB
   const toolbar = document.createElement('div');
-  toolbar.className = 'ce-selection-toolbar';
+  const isMinimized = state.settings.minimizedMode || false;
+  toolbar.className = isMinimized ? 'ce-selection-toolbar ce-toolbar-minimized' : 'ce-selection-toolbar';
   toolbar.setAttribute('role', 'toolbar');
   toolbar.setAttribute('aria-label', 'Selection actions');
   
@@ -1157,32 +2144,59 @@ function createSelectionToolbar(selection, range) {
   toolbar.appendChild(saveBtn);
   toolbar.appendChild(copyBtn);
   
-  const container = document.getElementById(CONTAINER_ID) || createContainer();
-  container.appendChild(toolbar);
-  selectionToolbar = toolbar;
-  
-  // Position relative to FAB
-  if (fab) {
-    const fabRect = fab.getBoundingClientRect();
-    const containerRect = container.getBoundingClientRect();
-    toolbar.style.left = `${fabRect.left - containerRect.left - toolbar.offsetWidth - 12}px`;
-    toolbar.style.top = `${fabRect.top - containerRect.top}px`;
+  // Append to body (toolbar needs to be outside container for proper positioning)
+  // But add class to inherit theme variables
+  const container = document.getElementById(CONTAINER_ID);
+  if (container) {
+    // Copy theme class from container to toolbar
+    const themeClass = Array.from(container.classList).find(cls => cls.startsWith('ce-theme-'));
+    if (themeClass) {
+      toolbar.classList.add(themeClass);
+    }
   }
   
-  // Animate in
+  document.body.appendChild(toolbar);
+  selectionToolbar = toolbar;
+  
+  // Position relative to FAB - always grow from FAB
+  // Use requestAnimationFrame to ensure layout is calculated
   requestAnimationFrame(() => {
+    if (!fab) return;
+    
+    const padding = 12;
+    const fabRect = fab.getBoundingClientRect();
+    
+    // Get toolbar dimensions after it's in the DOM
+    const toolbarWidth = toolbar.offsetWidth || 150; // fallback width
+    const toolbarHeight = toolbar.offsetHeight || 80; // fallback height
+    
+    // Position toolbar above FAB, aligned to the right
+    const desiredTop = fabRect.top - toolbarHeight - padding;
+    const desiredLeft = fabRect.right - toolbarWidth;
+    
+    // Ensure toolbar stays within viewport
+    const headerBottom = getChatHeaderBottom();
+    const safeTop = headerBottom + padding;
+    const safeBottom = window.innerHeight - toolbarHeight - padding;
+    const clampedTop = clamp(desiredTop, safeTop, safeBottom);
+    
+    toolbar.style.left = `${Math.max(padding, desiredLeft)}px`;
+    toolbar.style.top = `${clampedTop}px`;
+    
+    // Animate in after positioning
     toolbar.classList.add('ce-toolbar-show');
   });
 }
 
 function hideSelectionToolbar() {
   if (selectionToolbar) {
-    selectionToolbar.classList.remove('ce-toolbar-show');
+    const toolbarToRemove = selectionToolbar;
+    selectionToolbar = null;
+    toolbarToRemove.classList.remove('ce-toolbar-show');
     setTimeout(() => {
-      if (selectionToolbar && selectionToolbar.parentNode) {
-        selectionToolbar.parentNode.removeChild(selectionToolbar);
+      if (toolbarToRemove && toolbarToRemove.parentNode) {
+        toolbarToRemove.parentNode.removeChild(toolbarToRemove);
       }
-      selectionToolbar = null;
     }, 200);
   }
 }
@@ -1193,13 +2207,24 @@ function updateFABCount(fab, count) {
     countEl.textContent = count;
   }
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
+  
+  // Update opacity for minimized mode when count is 0
+  const isMinimized = fab.classList.contains('ce-fab-minimized');
+  if (isMinimized) {
+    if (count === 0) {
+      fab.style.opacity = '0.5';
+    } else {
+      fab.style.opacity = '';
+    }
+  }
 }
 
-function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery) {
+function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, onSelectAll, onSearch, selectedIds, searchQuery, totalCount, sortOrder, onSortToggle, onClearSelected, onToggleTheme, onScopeChange, currentScope, currentProjectId) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
-  list.innerHTML = '';
+  
   if (snippets.length === 0) {
+    list.innerHTML = '';
     const emptyState = document.createElement('div');
     emptyState.className = 'ce-empty-state';
     if (searchQuery && searchQuery.trim()) {
@@ -1209,10 +2234,45 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     }
     list.appendChild(emptyState);
   } else {
-    snippets.forEach((snippet, index) => {
-      const isSelected = selectedIds && selectedIds.has(snippet.id);
-      const item = createSnippetItem(snippet, index, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, isSelected);
-      list.appendChild(item);
+    // Clear any empty state
+    list.innerHTML = '';
+    
+    // Ensure virtual container exists (it might not exist if we transitioned from empty state)
+    let container = list.querySelector('.ce-virtual-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'ce-virtual-container';
+      list.appendChild(container);
+      
+      // Re-attach scroll handler if it was lost
+      let scrollTimeout;
+      list.addEventListener('scroll', () => {
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+          updateVirtualizedList(list);
+        }, 10);
+      });
+      
+      // Re-attach resize observer if it was lost
+      if (window.ResizeObserver) {
+        const resizeObserver = new ResizeObserver(() => {
+          updateVirtualizedList(list);
+        });
+        resizeObserver.observe(list);
+      }
+    }
+    
+    // Update virtualization data
+    list._snippets = snippets;
+    list._onRemove = onRemove;
+    list._onSnippetClick = onSnippetClick;
+    list._onCopySnippet = onCopySnippet;
+    list._onToggleSelect = onToggleSelect;
+    list._selectedIds = selectedIds;
+    
+    // Update virtualized list (use requestAnimationFrame to ensure DOM is ready)
+    requestAnimationFrame(() => {
+      updateVirtualizedList(list);
     });
   }
   
@@ -1226,32 +2286,129 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
   }
   
-  // Update header buttons
-  const selectAllBtn = panel.querySelector('.ce-btn:not(.ce-btn-secondary):not(.ce-btn-icon)');
-  const copyBtn = panel.querySelector('.ce-btn-secondary');
-  const clearBtn = panel.querySelector('.ce-btn[aria-label="Clear all snippets"]');
-  
-  if (selectAllBtn) {
-    const allSelected = selectedIds && selectedIds.size === snippets.length && snippets.length > 0;
-    selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
-    selectAllBtn.setAttribute('aria-label', allSelected ? 'Deselect all snippets' : 'Select all snippets');
-    selectAllBtn.disabled = snippets.length === 0;
-    // Update click handler
-    selectAllBtn.onclick = onSelectAll;
-  }
-  
-  if (copyBtn) {
-    const selectedCount = selectedIds ? selectedIds.size : 0;
-    if (selectedCount > 0) {
-      copyBtn.textContent = `Copy (${selectedCount})`;
-      copyBtn.setAttribute('aria-label', `Copy ${selectedCount} selected snippets`);
+  // Update scope toggle (inside search bar)
+  const hasSearchQuery = searchQuery && searchQuery.trim();
+  const scopeToggle = panel.querySelector('.ce-scope-toggle');
+  if (hasSearchQuery && onScopeChange) {
+    const options = buildScopeOptions(currentProjectId || null);
+    const current = options.find(opt => opt.value === (currentScope || 'thread')) || options[0];
+    if (!scopeToggle) {
+      const searchWrapper = panel.querySelector('.ce-search-wrapper');
+      if (searchWrapper) {
+        const newToggle = createScopeToggle({
+          onScopeChange,
+          currentScope: currentScope || 'thread',
+          currentProjectId: currentProjectId || null
+        });
+        searchWrapper.appendChild(newToggle);
+      }
     } else {
-      copyBtn.textContent = 'Copy All';
-      copyBtn.setAttribute('aria-label', 'Copy all snippets');
+      scopeToggle.dataset.scope = current.value;
+      scopeToggle.textContent = current.label;
+      scopeToggle.setAttribute('aria-label', `Search scope: ${current.label}`);
+      scopeToggle.title = `Search scope: ${current.label}`;
     }
-    copyBtn.disabled = snippets.length === 0;
+  } else if (scopeToggle && !hasSearchQuery) {
+    scopeToggle.remove();
   }
-  if (clearBtn) clearBtn.disabled = snippets.length === 0;
+  
+  // Update button bar
+  // Count only selected snippets that are visible (not all selected snippets across all conversations)
+  const selectedCount = selectedIds ? snippets.filter(s => selectedIds.has(s.id)).length : 0;
+  const snippetIds = new Set(snippets.map(s => s.id));
+  const allSelected = snippetIds.size > 0 && Array.from(snippetIds).every(id => selectedIds && selectedIds.has(id));
+  const hasSelection = selectedCount > 0;
+  const isIndeterminate = hasSelection && !allSelected && snippets.length > 0;
+  
+  // Update select all checkbox
+  const selectAllCheckbox = panel.querySelector('.ce-select-all-checkbox');
+  const selectAllWrapper = panel.querySelector('.ce-select-all-wrapper');
+  if (selectAllCheckbox) {
+    if (allSelected && snippets.length > 0) {
+      selectAllCheckbox.checked = true;
+      selectAllCheckbox.indeterminate = false;
+      selectAllCheckbox.setAttribute('aria-label', `Deselect all ${selectedCount} snippets`);
+      if (selectAllWrapper) selectAllWrapper.title = `Deselect all ${selectedCount} snippets`;
+    } else if (isIndeterminate) {
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = true;
+      selectAllCheckbox.setAttribute('aria-label', `${selectedCount} of ${snippets.length} selected`);
+      if (selectAllWrapper) selectAllWrapper.title = `${selectedCount} of ${snippets.length} selected`;
+    } else {
+      selectAllCheckbox.checked = false;
+      selectAllCheckbox.indeterminate = false;
+      selectAllCheckbox.setAttribute('aria-label', `Select all ${snippets.length} snippets`);
+      if (selectAllWrapper) selectAllWrapper.title = `Select all ${snippets.length} snippets`;
+    }
+    selectAllCheckbox.disabled = snippets.length === 0;
+  }
+  
+  // Update copy selected button
+  const copySelectedBtn = panel.querySelector('.ce-btn-copy-selected');
+  if (copySelectedBtn) {
+    copySelectedBtn.disabled = selectedCount === 0;
+    copySelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Copy ${selectedCount} selected snippets` : 'Copy selected');
+    copySelectedBtn.title = selectedCount > 0 ? `Copy ${selectedCount} selected` : 'Copy selected';
+  }
+  
+  // Update clear selected button
+  const clearSelectedBtn = panel.querySelector('.ce-btn-clear-selected');
+  if (clearSelectedBtn) {
+    clearSelectedBtn.disabled = selectedCount === 0;
+    clearSelectedBtn.setAttribute('aria-label', selectedCount > 0 ? `Clear ${selectedCount} selected snippets` : 'Clear selected');
+    clearSelectedBtn.title = selectedCount > 0 ? `Clear ${selectedCount} selected` : 'Clear selected';
+  }
+  
+  // Update copy all button
+  const copyAllBtn = panel.querySelector('.ce-btn-copy-all');
+  if (copyAllBtn) {
+    copyAllBtn.disabled = snippets.length === 0;
+  }
+  
+  // Update sort button
+  const sortBtn = panel.querySelector('.ce-btn-sort');
+  if (sortBtn && sortOrder) {
+    sortBtn.innerHTML = sortOrder === 'desc' ? '↓' : '↑';
+    sortBtn.setAttribute('aria-label', `Sort: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`);
+    sortBtn.title = `Sort: ${sortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'}`;
+    sortBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (onSortToggle) onSortToggle();
+    };
+  }
+  
+  // Update snippet counter
+  const snippetCounter = panel.querySelector('.ce-snippet-counter');
+  if (snippetCounter) {
+    const visibleSnippetCount = snippets.length; // Already filtered by search
+    const totalSnippetCount = totalCount !== undefined ? totalCount : snippets.length;
+    const hasSelectedSnippets = selectedCount > 0;
+    
+    // Build counter text based on state
+    let counterText = '';
+    if (hasSelectedSnippets && hasSearchQuery) {
+      // Selected + Searched: show selected / found / total
+      counterText = `${selectedCount} / ${visibleSnippetCount} / ${totalSnippetCount}`;
+    } else if (hasSelectedSnippets) {
+      // Selected only: show selected / total
+      counterText = `${selectedCount} / ${totalSnippetCount}`;
+    } else if (hasSearchQuery && visibleSnippetCount !== totalSnippetCount) {
+      // Searched only: show found / total
+      counterText = `${visibleSnippetCount} / ${totalSnippetCount}`;
+    } else {
+      // None selected, no search: show total
+      counterText = `${totalSnippetCount}`;
+    }
+    snippetCounter.textContent = counterText;
+    snippetCounter.setAttribute('aria-label', `Snippet count: ${counterText}`);
+  }
+  
+  // Update theme button (if it exists)
+  const themeBtn = panel.querySelector('.ce-btn-theme');
+  if (themeBtn && onToggleTheme) {
+    // Theme button state is managed by the theme toggle handler, no update needed here
+  }
 }
 
 // ============================================================================
@@ -1264,6 +2421,12 @@ let state = {
   selectedIds: new Set(),
   currentConversationId: null,
   searchQuery: '',
+  searchScope: 'thread',
+  sortOrder: 'desc', // 'desc' for newest first, 'asc' for oldest first
+  settings: {
+    theme: 'auto', // Default to auto (follows system)
+    minimizedMode: false // Default to full mode
+  },
   // When ChatGPT navigates to a new thread, it can take a moment for the URL to include the new conversationId.
   // We track the previous conversation so we can offer to copy snippets forward once the new ID exists.
   pendingTransferFromConversationId: null,
@@ -1279,6 +2442,138 @@ let state = {
 let container = null;
 let fab = null;
 let panel = null;
+let importExportModal = null;
+let modalOpen = false;
+
+function snippetKey(snippet) {
+  const anchor = snippet?.anchor || {};
+  const offsets = anchor.selectionOffsets || {};
+  return [
+    hashText(snippet?.text || ''),
+    snippet?.conversationId || '',
+    anchor.textHash || '',
+    offsets.start ?? '',
+    offsets.end ?? ''
+  ].join('|');
+}
+
+function normalizeImportedSnippet(raw) {
+  if (!raw || typeof raw.text !== 'string') return null;
+  const text = raw.text.trim();
+  if (!text) return null;
+  return {
+    id: typeof raw.id === 'string' ? raw.id : generateSnippetId(),
+    text,
+    conversationId: typeof raw.conversationId === 'string' ? raw.conversationId : null,
+    projectId: typeof raw.projectId === 'string' ? raw.projectId : null,
+    anchor: raw.anchor && typeof raw.anchor === 'object' ? raw.anchor : null,
+    timestamp: Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now(),
+    truncated: Boolean(raw.truncated)
+  };
+}
+
+function normalizeImportedSnippets(items) {
+  return items
+    .map(normalizeImportedSnippet)
+    .filter(Boolean);
+}
+
+function expandImportDuplicates(items) {
+  const seen = new Map();
+  const expanded = [];
+  let duplicates = 0;
+  items.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    const count = seen.get(key) || 0;
+    if (count === 0) {
+      expanded.push(snippet);
+    } else {
+      expanded.push({
+        ...snippet,
+        id: generateSnippetId(),
+        duplicateIndex: count + 1
+      });
+      duplicates += 1;
+    }
+    seen.set(key, count + 1);
+  });
+  return { items: expanded, duplicates };
+}
+
+// eslint-disable-next-line no-unused-vars
+function dedupeSnippets(items) {
+  const seen = new Set();
+  const deduped = [];
+  let skipped = 0;
+  items.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (seen.has(key)) {
+      skipped += 1;
+      return;
+    }
+    seen.add(key);
+    deduped.push(snippet);
+  });
+  return { items: deduped, skipped };
+}
+
+function mergeSnippets(existing, incoming) {
+  const existingMap = new Map(existing.map((snippet) => [snippetKey(snippet), snippet]));
+  const existingKeys = new Set(existingMap.keys());
+  const seenIncoming = new Set();
+  const merged = [];
+  let added = 0;
+  let skipped = 0;
+  incoming.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (seenIncoming.has(key)) {
+      skipped += 1;
+      return;
+    }
+    seenIncoming.add(key);
+    if (existingMap.has(key)) {
+      skipped += 1;
+      merged.push(existingMap.get(key));
+      return;
+    }
+    merged.push(snippet);
+    added += 1;
+  });
+  existing.forEach((snippet) => {
+    const key = snippetKey(snippet);
+    if (!seenIncoming.has(key) && existingKeys.has(key)) {
+      merged.push(snippet);
+    }
+  });
+  return { items: merged, added, skipped };
+}
+
+function buildMarkdownFromSnippets(snippets) {
+  const combined = snippets
+    .map((snippet) => cleanupMarkdown(snippet.text))
+    .join('\n\n');
+  return cleanupMarkdown(combined);
+}
+
+function downloadTextFile(filename, text, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 0);
+}
+
+function exportFilename(extension) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `chatgpt-snippets-${stamp}.${extension}`;
+}
 
 // ============================================================================
 // Branch detection helpers
@@ -1409,10 +2704,12 @@ function copySnippetsToConversation({ fromConversationId, toConversationId }) {
   if (fromSnippets.length === 0 || toSnippets.length > 0) {
     return 0;
   }
+  const currentProjectId = getCurrentProjectId();
   const copied = fromSnippets.map((s) => ({
     ...s,
     id: generateSnippetId(),
     conversationId: toConversationId,
+    projectId: currentProjectId,
     transferredFromConversationId: fromConversationId,
     anchor: s.anchor ? { ...s.anchor } : s.anchor
   }));
@@ -1474,17 +2771,109 @@ function scheduleBranchedFromTransferCheck() {
     }
     state.lastAutoTransferKey = key;
     
-    const copiedCount = copySnippetsToConversation({ fromConversationId: fromId, toConversationId: toConvId });
-    if (copiedCount > 0) {
-      createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} from parent thread`);
+    // Check if there are snippets to copy
+    const fromSnippets = state.items.filter(s => s.conversationId === fromId);
+    if (fromSnippets.length === 0) {
+      clearInterval(interval);
+      return;
     }
-    clearInterval(interval);
+    
+    // Show confirmation prompt
+    showBranchCopyPrompt(fromId, toConvId, fromSnippets.length).then((shouldCopy) => {
+      if (shouldCopy) {
+        const copiedCount = copySnippetsToConversation({ fromConversationId: fromId, toConversationId: toConvId });
+        if (copiedCount > 0) {
+          createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} from parent thread`);
+        }
+      }
+      clearInterval(interval);
+    });
   }, 500);
+}
+
+/**
+ * Applies theme to the extension UI.
+ * @param {string} theme - Theme mode: 'light', 'dark', or 'auto'
+ */
+function applyTheme(theme) {
+  if (!container) return;
+  
+  container.classList.remove('ce-theme-light', 'ce-theme-dark');
+  
+  if (theme === 'auto') {
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    container.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
+  } else {
+    container.classList.add(`ce-theme-${theme}`);
+  }
+  
+  // Update panel theme class if panel exists
+  if (panel) {
+    panel.classList.remove('ce-theme-light', 'ce-theme-dark');
+    if (theme === 'auto') {
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      panel.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
+    } else {
+      panel.classList.add(`ce-theme-${theme}`);
+    }
+  }
+}
+
+/**
+ * Gets current theme setting.
+ * @returns {string} Current theme
+ */
+function getCurrentTheme() {
+  return state.settings.theme || 'auto';
+}
+
+/**
+ * Handles theme toggle.
+ */
+async function handleToggleTheme() {
+  const currentTheme = getCurrentTheme();
+  let nextTheme;
+  
+  // Cycle through: auto -> light -> dark -> auto
+  if (currentTheme === 'auto') {
+    nextTheme = 'light';
+  } else if (currentTheme === 'light') {
+    nextTheme = 'dark';
+  } else {
+    nextTheme = 'auto';
+  }
+  
+  state.settings.theme = nextTheme;
+  applyTheme(nextTheme);
+  await persistState();
+  updateUI();
+  
+  const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+  createToast(`Theme: ${themeLabels[nextTheme]}`);
+}
+
+async function handleToggleMinimized() {
+  state.settings.minimizedMode = !state.settings.minimizedMode;
+  await persistState();
+  renderUI();
 }
 
 async function init() {
   container = createContainer();
   await loadState();
+  
+  // Apply theme
+  applyTheme(state.settings.theme || 'auto');
+  
+  // Listen to system theme changes for auto mode
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (state.settings.theme === 'auto') {
+        applyTheme('auto');
+      }
+    });
+  }
+  
   state.currentConversationId = getConversationId();
   renderUI();
   setupEventListeners();
@@ -1501,10 +2890,15 @@ async function init() {
   if (currentSnippets.length > 0) {
     const url = window.location.href;
     const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
-    if (isMainPage) {
-      createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
-    } else if (state.currentConversationId) {
-      createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation`);
+    // Show "Loaded X snippets" toast only once per session
+    const toastShown = sessionStorage.getItem('ce_snippets_loaded_toast_shown');
+    if (!toastShown && currentSnippets.length > 0) {
+      if (isMainPage) {
+        createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
+      } else if (state.currentConversationId) {
+        createToast(`Loaded ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''} from this conversation`);
+      }
+      sessionStorage.setItem('ce_snippets_loaded_toast_shown', 'true');
     }
   }
 }
@@ -1513,39 +2907,62 @@ async function init() {
  * Gets snippets for the current conversation, optionally filtered by search query.
  * @returns {Array} Filtered snippets array
  */
-function getCurrentConversationSnippets() {
+function getSnippetsByScope(scope, searchQuery = '', sortOrder = 'desc') {
   const currentConvId = getConversationId();
   const url = window.location.href;
-  
-  // Check if we're on the main page (not in a conversation)
   const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  const pendingBranch =
+    !!state.pendingTransferFromConversationId ||
+    (!!state.pendingExplicitBranch && (Date.now() - state.pendingExplicitBranch.at) < 15_000);
   
   let snippets = [];
   
-  if (isMainPage) {
-    // On main page: show all snippets, unless we are in the middle of a branch transition
-    // (ChatGPT sometimes navigates through an intermediate URL before the new /c/{id} appears).
-    const pendingBranch =
-      !!state.pendingTransferFromConversationId ||
-      (!!state.pendingExplicitBranch && (Date.now() - state.pendingExplicitBranch.at) < 15_000);
-    snippets = pendingBranch ? [] : state.items;
-  } else if (currentConvId) {
-    // In a conversation with ID: show only snippets from this conversation
-    snippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+  if (scope === 'project') {
+    const currentProjectId = getCurrentProjectId();
+    if (!currentProjectId) {
+      return getSnippetsByScope('thread', searchQuery, sortOrder);
+    }
+    snippets = state.items.filter(snippet => snippet.projectId === currentProjectId);
+  } else if (scope === 'all') {
+    snippets = state.items.slice();
   } else {
-    // In a conversation view but no ID yet (e.g., new thread): show nothing
-    snippets = [];
+    if (isMainPage) {
+      snippets = pendingBranch ? [] : state.items.slice();
+    } else if (currentConvId) {
+      snippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+    } else {
+      snippets = [];
+    }
   }
   
-  // Apply search filter if query exists
-  if (state.searchQuery && state.searchQuery.trim()) {
-    const query = state.searchQuery.toLowerCase().trim();
+  if (searchQuery && searchQuery.trim()) {
+    const query = searchQuery.toLowerCase().trim();
     snippets = snippets.filter(snippet => 
-      snippet.text.toLowerCase().includes(query)
+      snippet.text && snippet.text.toLowerCase().includes(query)
     );
   }
   
+  snippets.sort((a, b) => {
+    const aTime = a.timestamp || 0;
+    const bTime = b.timestamp || 0;
+    return sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
+  });
+  
   return snippets;
+}
+
+function getCurrentConversationSnippets() {
+  const hasSearchQuery = state.searchQuery && state.searchQuery.trim();
+  if (hasSearchQuery) {
+    let scope = state.searchScope || 'thread';
+    if (scope === 'project' && getCurrentProjectId() === null) {
+      scope = 'thread';
+      state.searchScope = 'thread';
+    }
+    return getSnippetsByScope(scope, state.searchQuery, state.sortOrder);
+  }
+  
+  return getSnippetsByScope('thread', '', state.sortOrder);
 }
 
 /**
@@ -1595,10 +3012,18 @@ function watchConversationChanges() {
       (now - explicit.at) < 15_000;
     if (isExplicitBranch) {
       state.pendingExplicitBranch = null;
-      // Avoid `confirm()` here: it can be blocked because this runs on navigation timers, not a direct user gesture.
-      const copiedCount = copySnippetsToConversation({ fromConversationId: fromConvId, toConversationId: toConvId });
-      if (copiedCount > 0) {
-        createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} into this thread`);
+      // Check if there are snippets to copy
+      const fromSnippets = state.items.filter(s => s.conversationId === fromConvId);
+      if (fromSnippets.length > 0) {
+        // Show confirmation prompt
+        showBranchCopyPrompt(fromConvId, toConvId, fromSnippets.length).then((shouldCopy) => {
+          if (shouldCopy) {
+            const copiedCount = copySnippetsToConversation({ fromConversationId: fromConvId, toConversationId: toConvId });
+            if (copiedCount > 0) {
+              createToast(`Copied ${copiedCount} snippet${copiedCount !== 1 ? 's' : ''} into this thread`);
+            }
+          }
+        });
       }
       return;
     }
@@ -1629,6 +3054,7 @@ function watchConversationChanges() {
       // Clear selections and search when switching conversations
       state.selectedIds.clear();
       state.searchQuery = '';
+      state.searchScope = 'thread';
       updateUI();
       
       // Preserve the "from conversation" across intermediate URLs where the new conversationId isn't available yet.
@@ -1655,6 +3081,7 @@ function watchConversationChanges() {
       state.currentConversationId = currentConvId;
       state.selectedIds.clear();
       state.searchQuery = '';
+      state.searchScope = 'thread';
       updateUI();
       
       if (previousConvId && !currentConvId) {
@@ -1683,6 +3110,7 @@ function watchConversationChanges() {
         state.currentConversationId = currentConvId;
         state.selectedIds.clear();
         state.searchQuery = '';
+        state.searchScope = 'thread';
         updateUI();
         
         if (previousConvId && !currentConvId) {
@@ -1708,6 +3136,7 @@ function watchConversationChanges() {
         state.currentConversationId = currentConvId;
         state.selectedIds.clear();
         state.searchQuery = '';
+        state.searchScope = 'thread';
         updateUI();
         
         if (previousConvId && !currentConvId) {
@@ -1727,6 +3156,12 @@ async function loadState() {
   try {
     const items = await loadSnippets();
     state.items = items;
+    
+    // Load settings
+    const settingsResult = await chrome.storage.local.get('settings');
+    if (settingsResult.settings) {
+      state.settings = { ...state.settings, ...settingsResult.settings };
+    }
   } catch (error) {
     console.error('Failed to load state:', error);
     createToast('Failed to load snippets');
@@ -1736,6 +3171,8 @@ async function loadState() {
 async function persistState() {
   try {
     await saveSnippets(state.items);
+    // Save settings separately
+    await chrome.storage.local.set({ settings: state.settings });
   } catch (error) {
     console.error('Failed to save state:', error);
     createToast('Failed to save snippets');
@@ -1743,23 +3180,11 @@ async function persistState() {
 }
 
 function renderUI() {
-  // Get snippets without search filter for count (show total for current conversation)
-  const currentConvId = getConversationId();
-  const url = window.location.href;
-  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
-  
-  let totalSnippets = [];
-  if (isMainPage) {
-    const pendingBranch =
-      !!state.pendingTransferFromConversationId ||
-      (!!state.pendingExplicitBranch && (Date.now() - state.pendingExplicitBranch.at) < 15_000);
-    totalSnippets = pendingBranch ? [] : state.items;
-  } else if (currentConvId) {
-    totalSnippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
-  } else {
-    // In conversation view but no ID yet: show 0
-    totalSnippets = [];
-  }
+  const hasSearchQuery = state.searchQuery && state.searchQuery.trim();
+  const scope = state.searchScope || 'thread';
+  const totalSnippets = hasSearchQuery
+    ? getSnippetsByScope(scope, '', state.sortOrder)
+    : getSnippetsByScope('thread', '', state.sortOrder);
   
   // Get filtered snippets for display
   const currentSnippets = getCurrentConversationSnippets();
@@ -1768,7 +3193,7 @@ function renderUI() {
     fab.parentNode.removeChild(fab);
   }
   // Show total count (not filtered)
-  fab = createFAB(totalSnippets.length, togglePanel);
+  fab = createFAB(totalSnippets.length, togglePanel, handleToggleMinimized);
   container.appendChild(fab);
   if (panel && panel.parentNode) {
     panel.parentNode.removeChild(panel);
@@ -1776,7 +3201,9 @@ function renderUI() {
   panel = createPanel({
     snippets: currentSnippets,
     onCopy: handleCopy,
+    onCopyAll: handleCopyAll,
     onClear: handleClear,
+    onClearSelected: handleClearSelected,
     onClose: handleClose,
     onRemove: handleRemove,
     onSnippetClick: handleSnippetClick,
@@ -1784,31 +3211,43 @@ function renderUI() {
     onToggleSelect: handleToggleSelect,
     onSelectAll: handleSelectAll,
     onSearch: handleSearch,
+    onManage: handleOpenImportExport,
+    onToggleTheme: handleToggleTheme,
+    onSortToggle: handleSortToggle,
+    onScopeChange: handleScopeChange,
+    currentTheme: getCurrentTheme(),
     selectedIds: state.selectedIds,
-    searchQuery: state.searchQuery
+    searchQuery: state.searchQuery,
+    totalCount: totalSnippets.length,
+    sortOrder: state.sortOrder,
+    currentScope: state.searchScope,
+    currentProjectId: getCurrentProjectId()
   });
+  
+  // Apply theme class to panel so it inherits CSS variables
+  if (container) {
+    const themeClass = Array.from(container.classList).find(cls => cls.startsWith('ce-theme-'));
+    if (themeClass) {
+      panel.classList.add(themeClass);
+    } else {
+      // Default to light theme if no theme class found
+      panel.classList.add('ce-theme-light');
+    }
+  } else {
+    panel.classList.add('ce-theme-light');
+  }
+  
   panel.classList.toggle('ce-panel-open', state.panelOpen);
-  container.appendChild(panel);
+  document.body.appendChild(panel);
+  positionPanel(panel);
 }
 
 function updateUI() {
-  // Get total snippets for count (not filtered, but filtered by conversation)
-  const currentConvId = getConversationId();
-  const url = window.location.href;
-  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
-  
-  let totalSnippets = [];
-  if (isMainPage) {
-    const pendingBranch =
-      !!state.pendingTransferFromConversationId ||
-      (!!state.pendingExplicitBranch && (Date.now() - state.pendingExplicitBranch.at) < 15_000);
-    totalSnippets = pendingBranch ? [] : state.items;
-  } else if (currentConvId) {
-    totalSnippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
-  } else {
-    // In conversation view but no ID yet: show 0
-    totalSnippets = [];
-  }
+  const hasSearchQuery = state.searchQuery && state.searchQuery.trim();
+  const scope = state.searchScope || 'thread';
+  const totalSnippets = hasSearchQuery
+    ? getSnippetsByScope(scope, '', state.sortOrder)
+    : getSnippetsByScope('thread', '', state.sortOrder);
   
   // Get filtered snippets for display
   const currentSnippets = getCurrentConversationSnippets();
@@ -1818,7 +3257,27 @@ function updateUI() {
     updateFABCount(fab, totalSnippets.length);
   }
   if (panel) {
-    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery);
+    // Update theme class on panel
+    const currentTheme = getCurrentTheme();
+    panel.classList.remove('ce-theme-light', 'ce-theme-dark');
+    if (currentTheme === 'auto') {
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      panel.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
+    } else {
+      panel.classList.add(`ce-theme-${currentTheme}`);
+    }
+    
+    // Update theme button icon if it exists
+    const themeBtn = panel.querySelector('.ce-btn-theme');
+    if (themeBtn) {
+      const themeIcons = { auto: '🌓', light: '☀', dark: '🌙' };
+      const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+      themeBtn.innerHTML = themeIcons[currentTheme] || '🌓';
+      themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
+      themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
+    }
+    
+    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick, handleCopySnippet, handleToggleSelect, handleSelectAll, handleSearch, state.selectedIds, state.searchQuery, totalSnippets.length, state.sortOrder, handleSortToggle, handleClearSelected, handleToggleTheme, handleScopeChange, state.searchScope, getCurrentProjectId());
   }
 }
 
@@ -1832,6 +3291,10 @@ function setupEventListeners() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (modalOpen) {
+        handleCloseImportExport();
+        return;
+      }
       if (state.panelOpen) {
         handleClose();
       }
@@ -1839,6 +3302,11 @@ function setupEventListeners() {
     }
   });
   document.addEventListener('click', (e) => {
+    if (modalOpen) return;
+    // Don't close panel if clicking on modal overlay (confirmation modal)
+    if (activeModalOverlay) {
+      return;
+    }
     if (state.panelOpen && panel && !panel.contains(e.target) && !fab.contains(e.target)) {
       handleClose();
     }
@@ -1847,6 +3315,11 @@ function setupEventListeners() {
   document.addEventListener('scroll', () => {
     hideSelectionToolbar();
   }, true);
+  window.addEventListener('resize', () => {
+    if (panel) {
+      positionPanel(panel);
+    }
+  });
 }
 
 function handleSelection(e) {
@@ -1893,9 +3366,18 @@ function addSnippet(snippet) {
 }
 
 async function handleRemove(id) {
+  // Find the snippet to show preview
+  const snippet = state.items.find(item => item.id === id);
+  if (!snippet) return;
+  
+  // Get first two lines of snippet text
+  const lines = snippet.text.split('\n').filter(line => line.trim());
+  const preview = lines.slice(0, 2).join('\n');
+  const previewText = preview.length > 100 ? preview.substring(0, 100) + '...' : preview;
+  
   const ok = await showConfirmModal({
     title: 'Remove snippet?',
-    message: 'This will remove it from your collected list. You can’t undo this.',
+    message: previewText ? `Remove this snippet?\n\n"${previewText}"\n\nThis will remove it from your collected list. You cannot undo this.` : 'This will remove it from your collected list. You cannot undo this.',
     confirmText: 'Remove',
     cancelText: 'Cancel',
     danger: true
@@ -1936,6 +3418,42 @@ async function handleClear() {
   createToast(`Cleared ${currentSnippets.length} snippet${currentSnippets.length !== 1 ? 's' : ''}`);
 }
 
+async function handleClearSelected() {
+  if (state.selectedIds.size === 0) return;
+  
+  const selectedSnippets = state.items.filter(snippet => state.selectedIds.has(snippet.id));
+  if (selectedSnippets.length === 0) return;
+  
+  const ok = await showConfirmModal({
+    title: 'Clear selected snippets?',
+    message: `Clear ${selectedSnippets.length} selected snippet${selectedSnippets.length !== 1 ? 's' : ''}?`,
+    confirmText: 'Clear',
+    cancelText: 'Cancel',
+    danger: true
+  });
+  if (!ok) return;
+  
+  // Remove selected snippets
+  state.items = state.items.filter(snippet => !state.selectedIds.has(snippet.id));
+  state.selectedIds.clear();
+  updateUI();
+  persistState();
+  createToast(`Cleared ${selectedSnippets.length} snippet${selectedSnippets.length !== 1 ? 's' : ''}`);
+}
+
+function showCopyIndicator(button, originalText) {
+  if (!button) return;
+  
+  button.classList.add('ce-btn-copied');
+  const originalContent = button.innerHTML;
+  button.innerHTML = '✓ ' + (originalText || 'Copied');
+  
+  setTimeout(() => {
+    button.classList.remove('ce-btn-copied');
+    button.innerHTML = originalContent;
+  }, 2500);
+}
+
 async function handleCopy() {
   // Get visible (filtered) snippets
   const visibleSnippets = getCurrentConversationSnippets();
@@ -1962,14 +3480,23 @@ async function handleCopy() {
     return;
   }
   
+  // Sort snippets chronologically (oldest first) for copying, regardless of display order
+  snippetsToCopy.sort((a, b) => {
+    const aTime = a.timestamp || 0;
+    const bTime = b.timestamp || 0;
+    return aTime - bTime; // Oldest first
+  });
+  
   // Format snippets as markdown with cleanup
+  // Add separator between snippets if copying multiple
+  const separator = snippetsToCopy.length > 1 ? '\n\n---\n\n' : '\n\n';
   const markdown = snippetsToCopy
     .map((snippet) => {
       // Clean up each snippet's markdown
       const cleaned = cleanupMarkdown(snippet.text);
       return cleaned;
     })
-    .join('\n\n');
+    .join(separator);
   
   // Apply final cleanup to the entire output
   const finalMarkdown = cleanupMarkdown(markdown);
@@ -1978,9 +3505,187 @@ async function handleCopy() {
     await navigator.clipboard.writeText(finalMarkdown);
     const count = snippetsToCopy.length;
     createToast(`Copied ${count} snippet${count !== 1 ? 's' : ''} to clipboard`);
+    
+    // Show indicator on Copy Selected button
+    if (panel) {
+      const copyBtn = panel.querySelector('.ce-btn-copy-selected');
+      if (copyBtn) {
+        showCopyIndicator(copyBtn, copyBtn.innerHTML);
+      }
+    }
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
+  }
+}
+
+async function handleCopyAll() {
+  // Get visible (filtered) snippets
+  const visibleSnippets = getCurrentConversationSnippets();
+  
+  if (visibleSnippets.length === 0) {
+    createToast('No snippets to copy');
+    return;
+  }
+  
+  // Always copy all visible snippets, regardless of selection
+  const snippetsToCopy = visibleSnippets;
+  
+  // Sort snippets chronologically (oldest first) for copying, regardless of display order
+  snippetsToCopy.sort((a, b) => {
+    const aTime = a.timestamp || 0;
+    const bTime = b.timestamp || 0;
+    return aTime - bTime; // Oldest first
+  });
+  
+  // Format snippets as markdown with cleanup
+  // Add separator between snippets if copying multiple
+  const separator = snippetsToCopy.length > 1 ? '\n\n---\n\n' : '\n\n';
+  const markdown = snippetsToCopy
+    .map((snippet) => {
+      // Clean up each snippet's markdown
+      const cleaned = cleanupMarkdown(snippet.text);
+      return cleaned;
+    })
+    .join(separator);
+  
+  // Apply final cleanup to the entire output
+  const finalMarkdown = cleanupMarkdown(markdown);
+  
+  try {
+    await navigator.clipboard.writeText(finalMarkdown);
+    const count = snippetsToCopy.length;
+    createToast(`Copied ${count} snippet${count !== 1 ? 's' : ''} to clipboard`);
+    
+    // Show indicator on Copy All button
+    if (panel) {
+      const copyAllBtn = panel.querySelector('.ce-btn-copy-all');
+      if (copyAllBtn) {
+        showCopyIndicator(copyAllBtn, copyAllBtn.innerHTML);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to copy:', error);
+    createToast('Failed to copy to clipboard');
+  }
+}
+
+function handleOpenImportExport() {
+  if (modalOpen) return;
+  importExportModal = createImportExportModal({
+    snippetCount: state.items.length,
+    onClose: handleCloseImportExport,
+    onExportJson: handleExportJson,
+    onExportMarkdown: handleExportMarkdown,
+    onPreview: handlePreviewImport,
+    onConfirm: handleConfirmImport
+  });
+  document.body.appendChild(importExportModal);
+  modalOpen = true;
+}
+
+function handleCloseImportExport() {
+  if (!importExportModal) return;
+  importExportModal.remove();
+  importExportModal = null;
+  modalOpen = false;
+}
+
+function handleExportJson() {
+  if (state.items.length === 0) {
+    createToast('No snippets to export');
+    return;
+  }
+  const payload = {
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    items: state.items
+  };
+  downloadTextFile(exportFilename('json'), JSON.stringify(payload, null, 2), 'application/json');
+  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+}
+
+function handleExportMarkdown() {
+  if (state.items.length === 0) {
+    createToast('No snippets to export');
+    return;
+  }
+  const markdown = buildMarkdownFromSnippets(state.items);
+  downloadTextFile(exportFilename('md'), markdown, 'text/markdown');
+  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+}
+
+async function handlePreviewImport(file, mode, setStatus, setPreview, setPending) {
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const items = Array.isArray(parsed) ? parsed : parsed.items;
+    if (!Array.isArray(items)) {
+      setStatus('Invalid JSON format.', 'error');
+      setPreview('Preview unavailable.', 'error');
+      setPending(null);
+      return;
+    }
+    const normalized = normalizeImportedSnippets(items);
+    if (normalized.length === 0) {
+      setStatus('No valid snippets found.', 'error');
+      setPreview('Preview unavailable.', 'error');
+      setPending(null);
+      return;
+    }
+    const { items: expanded, duplicates } = expandImportDuplicates(normalized);
+    if (mode === 'replace') {
+      const preview = `Preview: ${expanded.length} snippet${expanded.length !== 1 ? 's' : ''} will replace ${state.items.length}.` +
+        (duplicates ? ` ${duplicates} duplicate${duplicates !== 1 ? 's' : ''} in file will be labeled.` : '');
+      setStatus('Preview ready.', 'success');
+      setPreview(preview, 'success');
+      setPending({ items: expanded });
+      return;
+    }
+    const { items: merged, added, skipped } = mergeSnippets(state.items, expanded);
+    const preview = `Preview: add ${added} new, skip ${skipped} duplicate${skipped !== 1 ? 's' : ''}.` +
+      ` Total after import: ${merged.length}.` +
+      (duplicates ? ` ${duplicates} duplicate${duplicates !== 1 ? 's' : ''} in file will be labeled.` : '');
+    setStatus('Preview ready.', 'success');
+    setPreview(preview, 'success');
+    setPending({ items: expanded });
+  } catch (error) {
+    console.error('Failed to import snippets:', error);
+    setStatus('Failed to read import file.', 'error');
+    setPreview('Preview unavailable.', 'error');
+    setPending(null);
+  }
+}
+
+async function handleConfirmImport(pending, mode, setStatus, setPreview, setPending) {
+  try {
+    if (!pending?.items) {
+      setStatus('No preview data available.', 'error');
+      return;
+    }
+    if (mode === 'replace') {
+      state.items = pending.items;
+      state.selectedIds.clear();
+      state.searchQuery = '';
+      state.searchScope = 'thread';
+      updateUI();
+      await persistState();
+      setStatus(`Imported ${pending.items.length} snippet${pending.items.length !== 1 ? 's' : ''}.`, 'success');
+      setPreview('Import complete. You can select another file to import.', 'success');
+      setPending(null);
+      return;
+    }
+    const { items: merged, added, skipped } = mergeSnippets(state.items, pending.items);
+    state.items = merged;
+    updateUI();
+    await persistState();
+    const suffix = skipped ? ` (${skipped} duplicates skipped)` : '';
+    setStatus(`Imported ${added} new snippet${added !== 1 ? 's' : ''}${suffix}.`, 'success');
+    setPreview('Import complete. You can select another file to import.', 'success');
+    setPending(null);
+  } catch (error) {
+    console.error('Failed to import snippets:', error);
+    setStatus('Failed to import snippets.', 'error');
   }
 }
 
@@ -1995,24 +3700,49 @@ function handleToggleSelect(snippetId) {
 
 function handleSelectAll() {
   const currentSnippets = getCurrentConversationSnippets();
+  if (currentSnippets.length === 0) return;
+  
   const currentSnippetIds = new Set(currentSnippets.map(item => item.id));
   const allSelected = currentSnippetIds.size > 0 && 
                       Array.from(currentSnippetIds).every(id => state.selectedIds.has(id));
   
   if (allSelected) {
     // Deselect all current conversation snippets
-    currentSnippetIds.forEach(id => state.selectedIds.delete(id));
+    currentSnippetIds.forEach(id => {
+      state.selectedIds.delete(id);
+    });
   } else {
     // Select all current conversation snippets
-    currentSnippetIds.forEach(id => state.selectedIds.add(id));
+    currentSnippetIds.forEach(id => {
+      state.selectedIds.add(id);
+    });
   }
   updateUI();
 }
 
 function handleSearch(query) {
   state.searchQuery = query;
+  if (!query || !query.trim()) {
+    state.searchScope = 'thread';
+  }
   // Clear selections when searching (optional - you might want to keep them)
   // state.selectedIds.clear();
+  updateUI();
+}
+
+function handleScopeChange(scope) {
+  if (!['thread', 'project', 'all'].includes(scope)) {
+    return;
+  }
+  if (scope === 'project' && getCurrentProjectId() === null) {
+    scope = 'thread';
+  }
+  state.searchScope = scope;
+  updateUI();
+}
+
+function handleSortToggle() {
+  state.sortOrder = state.sortOrder === 'desc' ? 'asc' : 'desc';
   updateUI();
 }
 
@@ -2022,6 +3752,17 @@ async function handleCopySnippet(snippet) {
     const cleaned = cleanupMarkdown(snippet.text);
     await navigator.clipboard.writeText(cleaned);
     createToast('Copied to clipboard');
+    
+    // Show indicator on snippet's copy button
+    if (panel) {
+      const snippetItem = panel.querySelector(`[data-snippet-id="${snippet.id}"]`);
+      if (snippetItem) {
+        const copyBtn = snippetItem.querySelector('.ce-btn-copy');
+        if (copyBtn) {
+          showCopyIndicator(copyBtn, '');
+        }
+      }
+    }
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
@@ -2039,6 +3780,9 @@ function togglePanel() {
   state.panelOpen = !state.panelOpen;
   if (panel) {
     panel.classList.toggle('ce-panel-open', state.panelOpen);
+    if (state.panelOpen) {
+      positionPanel(panel);
+    }
   }
   // Hide selection toolbar when opening/closing panel
   hideSelectionToolbar();
@@ -2048,6 +3792,7 @@ function handleClose() {
   state.panelOpen = false;
   // Clear search when closing panel
   state.searchQuery = '';
+  state.searchScope = 'thread';
   if (panel) {
     panel.classList.remove('ce-panel-open');
   }

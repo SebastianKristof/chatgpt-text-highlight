@@ -46,15 +46,41 @@ export function createFAB(count, onClick) {
  * @param {Function} config.onClose - Close handler
  * @param {Function} config.onRemove - Remove handler (id) => void
  * @param {Function} config.onSnippetClick - Snippet click handler (snippet) => void
+ * @param {Function} config.onToggleAutoSave - Toggle auto-save handler (optional)
+ * @param {boolean} config.autoSaveEnabled - Whether auto-save is enabled (optional)
+ * @param {Function} config.onToggleTheme - Toggle theme handler (optional)
+ * @param {string} config.currentTheme - Current theme: 'light', 'dark', or 'auto' (optional)
+ * @param {number} config.totalCount - Total count for search counter (optional)
+ * @param {string} config.searchQuery - Current search query (optional)
+ * @param {Function} config.onScopeChange - Scope change handler (optional)
+ * @param {string} config.currentScope - Current scope: 'thread', 'project', or 'all' (optional)
+ * @param {string|null} config.currentProjectId - Current project ID (optional)
+ * @param {Function} config.onSearch - Search handler (optional)
  * @returns {HTMLElement} Panel element
  */
-export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick }) {
+export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, totalCount, searchQuery, onScopeChange, currentScope, currentProjectId, onSearch }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Collected snippets');
   
-  const header = createPanelHeader({ onCopy, onClear, onClose, snippetCount: snippets.length });
+  const header = createPanelHeader({ 
+    onCopy, 
+    onClear, 
+    onClose, 
+    onManage, 
+    onToggleAutoSave,
+    autoSaveEnabled,
+    onToggleTheme,
+    currentTheme,
+    snippetCount: snippets.length,
+    totalCount: totalCount !== undefined ? totalCount : snippets.length,
+    searchQuery: searchQuery || '',
+    onSearch,
+    onScopeChange,
+    currentScope: currentScope || 'thread',
+    currentProjectId: currentProjectId || null
+  });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick });
   const footer = createPanelFooter();
   
@@ -68,30 +94,23 @@ export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSn
 /**
  * Creates the panel header.
  */
-function createPanelHeader({ onCopy, onClear, onClose, snippetCount }) {
+function createPanelHeader({ onCopy, onClear, onClose, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, snippetCount, totalCount, searchQuery, onSearch, onScopeChange, currentScope, currentProjectId }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   
+  // Title row with close icon
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-panel-title-row';
+  
   const title = document.createElement('h2');
   title.className = 'ce-panel-title';
-  title.textContent = 'Collected Snippets';
   
-  const actions = document.createElement('div');
-  actions.className = 'ce-panel-actions';
-  
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'ce-btn ce-btn-secondary';
-  copyBtn.textContent = 'Copy';
-  copyBtn.setAttribute('aria-label', 'Copy all snippets');
-  copyBtn.addEventListener('click', onCopy);
-  copyBtn.disabled = snippetCount === 0;
-  
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'ce-btn ce-btn-secondary';
-  clearBtn.textContent = 'Clear';
-  clearBtn.setAttribute('aria-label', 'Clear all snippets');
-  clearBtn.addEventListener('click', onClear);
-  clearBtn.disabled = snippetCount === 0;
+  // Show search counter if search is active
+  if (searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippetCount) {
+    title.textContent = `Collected Snippets (${snippetCount} of ${totalCount})`;
+  } else {
+    title.textContent = 'Collected Snippets';
+  }
   
   const closeBtn = document.createElement('button');
   closeBtn.className = 'ce-btn ce-btn-icon';
@@ -99,11 +118,136 @@ function createPanelHeader({ onCopy, onClear, onClose, snippetCount }) {
   closeBtn.innerHTML = '×';
   closeBtn.addEventListener('click', onClose);
   
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeBtn);
+  
+  // Search box
+  if (onSearch) {
+    const searchContainer = document.createElement('div');
+    searchContainer.className = 'ce-search-container';
+    const searchWrapper = document.createElement('div');
+    searchWrapper.className = 'ce-search-wrapper';
+    
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'ce-search-input';
+    searchInput.placeholder = 'Search snippets...';
+    searchInput.value = searchQuery || '';
+    searchInput.setAttribute('aria-label', 'Search snippets');
+    searchInput.addEventListener('input', (e) => {
+      console.log('[Search Input] Input event, value:', e.target.value);
+      if (onSearch) {
+        onSearch(e.target.value);
+      } else {
+        console.warn('[Search Input] onSearch handler not provided!');
+      }
+    });
+    
+    const clearSearchBtn = document.createElement('button');
+    clearSearchBtn.className = 'ce-search-clear';
+    clearSearchBtn.innerHTML = '×';
+    clearSearchBtn.setAttribute('aria-label', 'Clear search');
+    clearSearchBtn.title = 'Clear search';
+    clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
+    clearSearchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      searchInput.value = '';
+      if (onSearch) {
+        onSearch('');
+      }
+    });
+    
+    searchWrapper.appendChild(searchInput);
+    searchWrapper.appendChild(clearSearchBtn);
+    searchContainer.appendChild(searchWrapper);
+    header.appendChild(searchContainer);
+  }
+  
+  // Actions row (without close button)
+  const actions = document.createElement('div');
+  actions.className = 'ce-panel-actions';
+  
+  // Theme toggle button
+  if (onToggleTheme) {
+    const themeIcons = { auto: '⚙', light: '☀', dark: '🌙' };
+    const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+    const themeBtn = document.createElement('button');
+    themeBtn.className = 'ce-btn ce-btn-icon ce-btn-theme';
+    themeBtn.innerHTML = themeIcons[currentTheme] || '⚙';
+    themeBtn.setAttribute('aria-label', `Theme: ${themeLabels[currentTheme] || 'Auto'}`);
+    themeBtn.title = `Theme: ${themeLabels[currentTheme] || 'Auto'} (click to change)`;
+    themeBtn.addEventListener('click', onToggleTheme);
+    actions.appendChild(themeBtn);
+  }
+  
+  // Auto-save toggle button
+  if (onToggleAutoSave) {
+    const autoSaveBtn = document.createElement('button');
+    autoSaveBtn.className = 'ce-btn ce-btn-secondary ce-btn-auto-save';
+    autoSaveBtn.textContent = autoSaveEnabled ? 'Auto-save: ON' : 'Auto-save: OFF';
+    autoSaveBtn.setAttribute('aria-label', `Auto-save is ${autoSaveEnabled ? 'enabled' : 'disabled'}`);
+    autoSaveBtn.title = autoSaveEnabled ? 'Click to disable auto-save' : 'Click to enable auto-save';
+    autoSaveBtn.addEventListener('click', onToggleAutoSave);
+    actions.appendChild(autoSaveBtn);
+  }
+  
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'ce-btn ce-btn-secondary ce-btn-copy';
+  copyBtn.textContent = 'Copy';
+  copyBtn.setAttribute('aria-label', 'Copy all snippets');
+  copyBtn.addEventListener('click', onCopy);
+  copyBtn.disabled = snippetCount === 0;
+  
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'ce-btn ce-btn-secondary ce-btn-clear';
+  clearBtn.textContent = 'Clear';
+  clearBtn.setAttribute('aria-label', 'Clear all snippets');
+  clearBtn.addEventListener('click', onClear);
+  clearBtn.disabled = snippetCount === 0;
+  
+  const manageBtn = document.createElement('button');
+  manageBtn.className = 'ce-btn ce-btn-secondary ce-btn-manage';
+  manageBtn.textContent = 'Import/Export';
+  manageBtn.setAttribute('aria-label', 'Import or export snippets');
+  manageBtn.addEventListener('click', onManage);
+  
   actions.appendChild(copyBtn);
   actions.appendChild(clearBtn);
-  actions.appendChild(closeBtn);
+  actions.appendChild(manageBtn);
   
-  header.appendChild(title);
+  header.appendChild(titleRow);
+  
+  // Scope selector (only shown when search is active)
+  // Add it right after search container, before actions
+  if (searchQuery && searchQuery.trim() && onScopeChange) {
+    const scopeSelector = document.createElement('div');
+    scopeSelector.className = 'ce-scope-selector';
+    
+    const scopeOptions = [
+      { value: 'thread', label: 'Thread' },
+      ...(currentProjectId ? [{ value: 'project', label: 'Project' }] : []),
+      { value: 'all', label: 'All' }
+    ];
+    
+    scopeOptions.forEach(option => {
+      const btn = document.createElement('button');
+      btn.className = 'ce-scope-btn';
+      btn.textContent = option.label;
+      btn.setAttribute('aria-label', `Filter by ${option.label}`);
+      if (currentScope === option.value) {
+        btn.classList.add('active');
+      }
+      btn.addEventListener('click', () => {
+        if (onScopeChange) {
+          onScopeChange(option.value);
+        }
+      });
+      scopeSelector.appendChild(btn);
+    });
+    
+    header.appendChild(scopeSelector);
+  }
+  
   header.appendChild(actions);
   
   return header;
@@ -152,9 +296,18 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick) {
   const meta = document.createElement('div');
   meta.className = 'ce-snippet-meta';
   
-  const timestamp = new Date(snippet.timestamp);
+  const timestamp = new Date(snippet.createdAt || snippet.timestamp || Date.now());
   const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  meta.textContent = timeStr;
+  const timeEl = document.createElement('span');
+  timeEl.textContent = timeStr;
+  meta.appendChild(timeEl);
+  
+  if (snippet.duplicateIndex && snippet.duplicateIndex > 1) {
+    const dup = document.createElement('span');
+    dup.className = 'ce-duplicate-badge';
+    dup.textContent = `Duplicate #${snippet.duplicateIndex}`;
+    meta.appendChild(dup);
+  }
   
   const removeBtn = document.createElement('button');
   removeBtn.className = 'ce-btn ce-btn-icon ce-btn-small';
@@ -180,6 +333,217 @@ function createPanelFooter() {
   footer.className = 'ce-panel-footer';
   footer.textContent = 'Click a snippet to navigate to its source';
   return footer;
+}
+
+/**
+ * Creates the import/export modal.
+ * @param {Object} config - Modal configuration
+ * @returns {HTMLElement} Modal overlay
+ */
+export function createImportExportModal({ snippetCount, onClose, onExportJson, onExportMarkdown, onPreview, onConfirm }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'ce-modal-overlay ce-extension';
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      onClose();
+    }
+  });
+
+  const modal = document.createElement('div');
+  modal.className = 'ce-modal ce-modal-show';
+
+  const body = document.createElement('div');
+  body.className = 'ce-modal-body';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ce-modal-title-row';
+
+  const title = document.createElement('h3');
+  title.className = 'ce-modal-title';
+  title.textContent = 'Import / Export';
+
+  const closeIcon = document.createElement('button');
+  closeIcon.className = 'ce-btn ce-btn-icon';
+  closeIcon.setAttribute('aria-label', 'Close import/export');
+  closeIcon.innerHTML = '×';
+  closeIcon.addEventListener('click', onClose);
+
+  titleRow.appendChild(title);
+  titleRow.appendChild(closeIcon);
+
+  const message = document.createElement('p');
+  message.className = 'ce-modal-message';
+  message.textContent = 'Export your snippets as JSON or Markdown, or import a JSON backup.';
+
+  const exportSection = document.createElement('div');
+  exportSection.className = 'ce-modal-section';
+
+  const exportLabel = document.createElement('div');
+  exportLabel.className = 'ce-modal-label';
+  exportLabel.textContent = 'Export';
+
+  const exportRow = document.createElement('div');
+  exportRow.className = 'ce-modal-row';
+
+  const exportJsonBtn = document.createElement('button');
+  exportJsonBtn.className = 'ce-btn ce-btn-secondary';
+  exportJsonBtn.textContent = 'Export JSON';
+  exportJsonBtn.disabled = snippetCount === 0;
+  exportJsonBtn.addEventListener('click', onExportJson);
+
+  const exportMdBtn = document.createElement('button');
+  exportMdBtn.className = 'ce-btn ce-btn-secondary';
+  exportMdBtn.textContent = 'Export Markdown';
+  exportMdBtn.disabled = snippetCount === 0;
+  exportMdBtn.addEventListener('click', onExportMarkdown);
+
+  exportRow.appendChild(exportJsonBtn);
+  exportRow.appendChild(exportMdBtn);
+  exportSection.appendChild(exportLabel);
+  exportSection.appendChild(exportRow);
+
+  const importSection = document.createElement('div');
+  importSection.className = 'ce-modal-section';
+
+  const importLabel = document.createElement('div');
+  importLabel.className = 'ce-modal-label';
+  importLabel.textContent = 'Import (JSON)';
+
+  const importRow = document.createElement('div');
+  importRow.className = 'ce-modal-row';
+
+  const radioGroup = document.createElement('div');
+  radioGroup.className = 'ce-radio-group';
+
+  const mergeId = `ce-import-merge-${Date.now()}`;
+  const replaceId = `ce-import-replace-${Date.now()}`;
+
+  const mergeLabel = document.createElement('label');
+  mergeLabel.className = 'ce-radio';
+  const mergeInput = document.createElement('input');
+  mergeInput.type = 'radio';
+  mergeInput.name = 'ce-import-mode';
+  mergeInput.id = mergeId;
+  mergeInput.checked = true;
+  mergeLabel.appendChild(mergeInput);
+  mergeLabel.append('Merge (skip duplicates)');
+
+  const replaceLabel = document.createElement('label');
+  replaceLabel.className = 'ce-radio';
+  const replaceInput = document.createElement('input');
+  replaceInput.type = 'radio';
+  replaceInput.name = 'ce-import-mode';
+  replaceInput.id = replaceId;
+  replaceLabel.appendChild(replaceInput);
+  replaceLabel.append('Replace existing');
+
+  radioGroup.appendChild(mergeLabel);
+  radioGroup.appendChild(replaceLabel);
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+
+  const chooseBtn = document.createElement('button');
+  chooseBtn.className = 'ce-btn ce-btn-secondary';
+  chooseBtn.textContent = 'Choose JSON';
+  chooseBtn.addEventListener('click', () => fileInput.click());
+
+  const fileName = document.createElement('div');
+  fileName.className = 'ce-file-name';
+  fileName.textContent = 'No file selected';
+
+  const status = document.createElement('div');
+  status.className = 'ce-import-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = 'No import yet.';
+
+  const setStatus = (message, type = 'info') => {
+    status.textContent = message;
+    status.classList.remove('is-success', 'is-error');
+    if (type === 'success') status.classList.add('is-success');
+    if (type === 'error') status.classList.add('is-error');
+  };
+
+  const preview = document.createElement('div');
+  preview.className = 'ce-import-preview';
+  preview.textContent = 'Select a JSON file to preview import.';
+
+  const setPreview = (message, type = 'info') => {
+    preview.textContent = message;
+    preview.classList.remove('is-success', 'is-error');
+    if (type === 'success') preview.classList.add('is-success');
+    if (type === 'error') preview.classList.add('is-error');
+  };
+
+  let pendingImport = null;
+  let lastFile = null;
+
+  const setPending = (data) => {
+    pendingImport = data;
+    confirmBtn.disabled = !pendingImport;
+  };
+
+  const runPreview = () => {
+    if (!lastFile) return;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onPreview(lastFile, mode, setStatus, setPreview, setPending);
+  };
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    lastFile = file;
+    fileName.textContent = file.name;
+    runPreview();
+    fileInput.value = '';
+  });
+
+  importRow.appendChild(chooseBtn);
+  importRow.appendChild(fileName);
+  importSection.appendChild(importLabel);
+  importSection.appendChild(radioGroup);
+  importSection.appendChild(importRow);
+  importSection.appendChild(status);
+  importSection.appendChild(preview);
+
+  const actions = document.createElement('div');
+  actions.className = 'ce-modal-actions';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'ce-btn ce-btn-secondary';
+  confirmBtn.textContent = 'Confirm import';
+  confirmBtn.disabled = true;
+  confirmBtn.addEventListener('click', () => {
+    if (!pendingImport) return;
+    const mode = mergeInput.checked ? 'merge' : 'replace';
+    onConfirm(pendingImport, mode, setStatus, setPreview, setPending);
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ce-btn ce-btn-secondary';
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', onClose);
+
+  actions.appendChild(confirmBtn);
+  actions.appendChild(closeBtn);
+
+  body.appendChild(titleRow);
+  body.appendChild(message);
+  body.appendChild(exportSection);
+  body.appendChild(importSection);
+
+  modal.appendChild(body);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  overlay.appendChild(fileInput);
+
+  mergeInput.addEventListener('change', runPreview);
+  replaceInput.addEventListener('change', runPreview);
+
+  return overlay;
 }
 
 /**
@@ -235,8 +599,14 @@ export function updateFABCount(fab, count) {
  * @param {Array} snippets - New snippets array
  * @param {Function} onRemove - Remove handler
  * @param {Function} onSnippetClick - Snippet click handler
+ * @param {number} totalCount - Total count for search counter (optional)
+ * @param {string} searchQuery - Current search query (optional)
+ * @param {Function} onSearch - Search handler (optional)
+ * @param {Function} onScopeChange - Scope change handler (optional)
+ * @param {string} currentScope - Current scope (optional)
+ * @param {string|null} currentProjectId - Current project ID (optional)
  */
-export function updatePanel(panel, snippets, onRemove, onSnippetClick) {
+export function updatePanel(panel, snippets, onRemove, onSnippetClick, totalCount, searchQuery, onSearch, onScopeChange, currentScope, currentProjectId) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   
@@ -246,7 +616,9 @@ export function updatePanel(panel, snippets, onRemove, onSnippetClick) {
   if (snippets.length === 0) {
     const emptyState = document.createElement('div');
     emptyState.className = 'ce-empty-state';
-    emptyState.textContent = 'Select text to save a snippet';
+    emptyState.textContent = searchQuery && searchQuery.trim() 
+      ? 'No snippets match your search' 
+      : 'Select text to save a snippet';
     list.appendChild(emptyState);
   } else {
     snippets.forEach((snippet, index) => {
@@ -255,9 +627,116 @@ export function updatePanel(panel, snippets, onRemove, onSnippetClick) {
     });
   }
   
+  // Update search input and clear button
+  const searchInput = panel.querySelector('.ce-search-input');
+  const clearSearchBtn = panel.querySelector('.ce-search-clear');
+  if (searchInput && searchInput.value !== (searchQuery || '')) {
+    searchInput.value = searchQuery || '';
+  }
+  if (clearSearchBtn) {
+    clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
+  }
+  
+  // Update scope selector
+  const scopeSelector = panel.querySelector('.ce-scope-selector');
+  const hasSearchQuery = searchQuery && searchQuery.trim();
+  
+  console.log('[updatePanel] Scope selector check:', {
+    hasSearchQuery,
+    hasOnScopeChange: !!onScopeChange,
+    existingScopeSelector: !!scopeSelector,
+    searchQuery: searchQuery || '(empty)',
+    currentScope: currentScope || 'thread',
+    currentProjectId: currentProjectId || null
+  });
+  
+  if (hasSearchQuery && onScopeChange) {
+    // Create scope selector if it doesn't exist
+    if (!scopeSelector) {
+      const header = panel.querySelector('.ce-panel-header');
+      const searchContainer = panel.querySelector('.ce-search-container');
+      const actions = panel.querySelector('.ce-panel-actions');
+      
+      if (header) {
+        const newScopeSelector = document.createElement('div');
+        newScopeSelector.className = 'ce-scope-selector';
+        
+        const scopeOptions = [
+          { value: 'thread', label: 'Thread' },
+          ...(currentProjectId ? [{ value: 'project', label: 'Project' }] : []),
+          { value: 'all', label: 'All' }
+        ];
+        
+        scopeOptions.forEach(option => {
+          const btn = document.createElement('button');
+          btn.className = 'ce-scope-btn';
+          btn.textContent = option.label;
+          btn.setAttribute('aria-label', `Filter by ${option.label}`);
+          if (currentScope === option.value) {
+            btn.classList.add('active');
+          }
+          btn.addEventListener('click', () => {
+            if (onScopeChange) {
+              onScopeChange(option.value);
+            }
+          });
+          newScopeSelector.appendChild(btn);
+        });
+        
+        // Insert after search container, before actions
+        if (searchContainer) {
+          // Insert right after search container
+          if (searchContainer.nextSibling) {
+            header.insertBefore(newScopeSelector, searchContainer.nextSibling);
+          } else {
+            header.appendChild(newScopeSelector);
+          }
+        } else if (actions) {
+          header.insertBefore(newScopeSelector, actions);
+        } else {
+          header.appendChild(newScopeSelector);
+        }
+        
+        // Debug: verify it was added
+        console.log('[Scope Selector] Created and inserted', {
+          hasSearchContainer: !!searchContainer,
+          hasActions: !!actions,
+          optionsCount: scopeOptions.length,
+          currentScope: currentScope
+        });
+      }
+    } else {
+      // Update existing scope selector buttons
+      const buttons = scopeSelector.querySelectorAll('.ce-scope-btn');
+      buttons.forEach(btn => {
+        const btnText = btn.textContent.trim().toLowerCase();
+        let btnScope = 'thread';
+        if (btnText === 'project') btnScope = 'project';
+        else if (btnText === 'all') btnScope = 'all';
+        
+        if (currentScope === btnScope) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+  } else if (scopeSelector && !hasSearchQuery) {
+    // Remove scope selector when search is cleared
+    scopeSelector.remove();
+  }
+  
+  // Update title with search counter if search is active
+  const title = panel.querySelector('.ce-panel-title');
+  if (title && searchQuery && searchQuery.trim() && totalCount !== undefined && totalCount !== snippets.length) {
+    title.textContent = `Collected Snippets (${snippets.length} of ${totalCount})`;
+  } else if (title) {
+    title.textContent = 'Collected Snippets';
+  }
+  
   // Update button states
-  const copyBtn = panel.querySelector('.ce-btn[aria-label="Copy all snippets"]');
-  const clearBtn = panel.querySelector('.ce-btn[aria-label="Clear all snippets"]');
+  const copyBtn = panel.querySelector('.ce-btn-copy');
+  const clearBtn = panel.querySelector('.ce-btn-clear');
   if (copyBtn) copyBtn.disabled = snippets.length === 0;
   if (clearBtn) clearBtn.disabled = snippets.length === 0;
 }

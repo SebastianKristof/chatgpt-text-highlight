@@ -3,26 +3,17 @@
  */
 
 import { buildAnchor, findSelectionOffsets } from '../shared/anchor.js';
-import { hashText } from '../shared/hash.js';
+import { getProjectIdFromUrl, getConversationIdFromUrl } from '../shared/urlIds.js';
 
 const MAX_SELECTION_SIZE = 10000; // 10k chars limit
+const MIN_SELECTION_LENGTH = 3; // Minimum characters to save a snippet
 
 /**
  * Gets the conversation ID from the current URL.
  * @returns {string|null} Conversation ID or null
  */
 export function getConversationId() {
-  const url = window.location.href;
-  
-  // Try /c/{id} pattern
-  const match1 = url.match(/\/c\/([a-f0-9-]+)/);
-  if (match1) return match1[1];
-  
-  // Try ?conversationId=... pattern
-  const match2 = url.match(/[?&]conversationId=([^&]+)/);
-  if (match2) return match2[1];
-  
-  return null;
+  return getConversationIdFromUrl(window.location.href);
 }
 
 /**
@@ -32,14 +23,6 @@ export function getConversationId() {
  */
 export function findMessageBlock(node) {
   if (!node) return null;
-  
-  // Common ChatGPT message selectors
-  const selectors = [
-    '[data-message-id]',
-    '[data-message-author-role]',
-    'div[class*="message"]',
-    'div[class*="Message"]'
-  ];
   
   let current = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
   
@@ -158,7 +141,7 @@ export function buildSnippetFromSelection() {
   }
   
   const selectionText = getSelectionText();
-  if (!selectionText) return null;
+  if (!selectionText || selectionText.length < MIN_SELECTION_LENGTH) return null;
   
   // Truncate if too large
   let finalText = selectionText;
@@ -179,8 +162,10 @@ export function buildSnippetFromSelection() {
       id: generateSnippetId(),
       text: finalText,
       conversationId: getConversationId(),
+      projectId: getProjectIdFromUrl(window.location.href),
+      sourceUrl: window.location.href,
       anchor: null,
-      timestamp: Date.now(),
+      createdAt: Date.now(),
       truncated
     };
   }
@@ -209,8 +194,10 @@ export function buildSnippetFromSelection() {
     id: generateSnippetId(),
     text: finalText,
     conversationId,
+    projectId: getProjectIdFromUrl(window.location.href),
+    sourceUrl: window.location.href,
     anchor,
-    timestamp: Date.now(),
+    createdAt: Date.now(),
     truncated
   };
 }

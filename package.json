@@ -4,8 +4,16 @@
   "description": "Chrome/Edge extension for collecting text snippets from ChatGPT conversations",
   "type": "module",
   "scripts": {
-    "test": "vitest",
-    "test:watch": "vitest --watch"
+    "build": "node build.js",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug",
+    "test:all": "npm run test && npm run test:e2e",
+    "lint": "eslint . --ext .js",
+    "lint:fix": "eslint . --ext .js --fix",
+    "prepare": "husky"
   },
   "keywords": [
     "chrome-extension",
@@ -16,6 +24,11 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^8.57.0",
+    "husky": "^9.1.7",
+    "jsdom": "^27.4.0",
     "vitest": "^1.0.0"
   }
 }

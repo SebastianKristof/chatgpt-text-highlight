@@ -20,7 +20,22 @@ A Chrome/Edge extension (Manifest V3) that lets you collect text snippets from C
 
 ## Development
 
-The extension uses ES6 modules. Chrome/Edge Manifest V3 supports ES modules in content scripts, so the extension should work directly without a bundler. However, for production, you may want to use a bundler (like Vite or Rollup) for better performance and smaller bundle sizes.
+The extension uses ES6 modules. Chrome/Edge Manifest V3 supports ES modules in content scripts, so the extension should work directly without a bundler.
+
+### Building for Production
+
+To create a minified production build:
+
+```bash
+npm run build
+```
+
+This will:
+- Minify `content.js` and `content.css`
+- Copy `manifest.json` and icons
+- Output everything to the `dist/` directory
+
+The `dist/` folder contains the production-ready extension that you can load into Chrome/Edge or package for the Chrome Web Store.
 
 ### Icons
 
@@ -58,6 +73,10 @@ Icons are included in the `icons/` directory. They feature a simple design with 
 
 - Chrome 88+ (Manifest V3)
 - Edge 88+ (Manifest V3)
+
+## Privacy
+
+See `PRIVACY_POLICY.md`.
 
 ## License
 
