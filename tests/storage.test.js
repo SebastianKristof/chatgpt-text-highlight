@@ -60,7 +60,7 @@ const chromeMock = {
   }
 };
 
-global.chrome = chromeMock;
+globalThis.chrome = chromeMock;
 
 describe('createEmptyStorage', () => {
   it('creates empty v2 storage structure', () => {
