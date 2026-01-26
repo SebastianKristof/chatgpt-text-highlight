@@ -7,6 +7,7 @@ import { loadStorage, saveStorage, upsertSnippet, removeSnippet, clearThread, cl
 import { buildSnippetFromSelection, getConversationId } from './selection.js';
 import { navigateToSource } from './navigation.js';
 import { hashText } from '../shared/hash.js';
+import { getProjectIdFromUrl } from '../shared/urlIds.js';
 import { createContainer, createFAB, createPanel, createImportExportModal, createToast, updateFABCount, updatePanel } from './ui.js';
 
 // State
@@ -28,6 +29,7 @@ let state = {
     theme: 'auto' // Default to auto (follows system)
   },
   searchQuery: '',
+  searchScope: 'thread', // 'thread', 'project', or 'all'
   sortOrder: 'desc',
   // Cache for performance optimization
   cache: {
@@ -103,6 +105,8 @@ function normalizeImportedSnippet(raw) {
     id: typeof raw.id === 'string' ? raw.id : generateSnippetId(),
     text,
     conversationId: typeof raw.conversationId === 'string' ? raw.conversationId : null,
+    projectId: typeof raw.projectId === 'string' ? raw.projectId : null,
+    sourceUrl: typeof raw.sourceUrl === 'string' ? raw.sourceUrl : null,
     anchor: raw.anchor && typeof raw.anchor === 'object' ? raw.anchor : null,
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : (Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now()),
     truncated: Boolean(raw.truncated)
@@ -222,6 +226,14 @@ function getSnippetById(id) {
 }
 
 /**
+ * Gets the current project ID from the URL.
+ * @returns {string|null} Project ID or null
+ */
+function getCurrentProjectId() {
+  return getProjectIdFromUrl(window.location.href);
+}
+
+/**
  * Gets total count of snippets for a conversation.
  * @param {string|null} conversationId - Conversation ID or null for all
  * @returns {number} Count of snippets
@@ -299,6 +311,75 @@ function getSnippetsForConversation(conversationId, searchQuery = '', sortOrder 
     const bTime = b.createdAt || 0;
     return sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
   });
+  
+  // Apply search filter
+  if (searchQuery && searchQuery.trim()) {
+    const query = searchQuery.toLowerCase().trim();
+    snippets = snippets.filter(snippet => 
+      snippet.text && snippet.text.toLowerCase().includes(query)
+    );
+  }
+  
+  return snippets;
+}
+
+/**
+ * Gets snippets filtered by scope with optional search and sorting.
+ * @param {string} scope - Scope: 'thread', 'project', or 'all'
+ * @param {string} searchQuery - Optional search query
+ * @param {string} sortOrder - 'asc' or 'desc' (default: 'desc')
+ * @returns {Array} Array of snippet objects
+ */
+function getSnippetsByScope(scope, searchQuery = '', sortOrder = 'desc') {
+  const { snippetsById, index } = state.storage;
+  let snippets = [];
+  
+  if (scope === 'thread') {
+    // Current conversation
+    const conversationId = getConversationId();
+    if (conversationId === null) {
+      return [];
+    }
+    const threadIds = index.byThread[conversationId] || [];
+    threadIds.forEach(id => {
+      const snippet = snippetsById[id];
+      if (snippet) {
+        snippets.push(snippet);
+      }
+    });
+    
+    // Sort by createdAt
+    snippets.sort((a, b) => {
+      const aTime = a.createdAt || 0;
+      const bTime = b.createdAt || 0;
+      return sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
+    });
+  } else if (scope === 'project') {
+    // All snippets in current project
+    const currentProjectId = getCurrentProjectId();
+    if (currentProjectId === null) {
+      // Fallback to thread if no projectId
+      return getSnippetsByScope('thread', searchQuery, sortOrder);
+    }
+    
+    const projectIds = index.byProject[currentProjectId] || [];
+    projectIds.forEach(id => {
+      const snippet = snippetsById[id];
+      if (snippet) {
+        snippets.push(snippet);
+      }
+    });
+    
+    // Sort by createdAt
+    snippets.sort((a, b) => {
+      const aTime = a.createdAt || 0;
+      const bTime = b.createdAt || 0;
+      return sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
+    });
+  } else {
+    // All snippets
+    return getAllSnippets(searchQuery, sortOrder);
+  }
   
   // Apply search filter
   if (searchQuery && searchQuery.trim()) {
@@ -419,18 +500,21 @@ async function persistState() {
 
 /**
  * Gets current conversation snippets with caching.
+ * Uses scope filtering when search is active.
  * @returns {Array} Array of snippet objects for current conversation
  */
 function getCurrentConversationSnippets() {
   const conversationId = getConversationId();
   const url = window.location.href;
   const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  const hasSearchQuery = state.searchQuery && state.searchQuery.trim();
   
   // Build cache key
   const cacheKey = JSON.stringify({
     conversationId,
     isMainPage,
     searchQuery: state.searchQuery || '',
+    searchScope: state.searchScope || 'thread',
     sortOrder: state.sortOrder || 'desc',
     itemsVersion: state.cache.itemsVersion
   });
@@ -442,10 +526,23 @@ function getCurrentConversationSnippets() {
   
   // Recompute
   let snippets = [];
-  if (isMainPage) {
-    snippets = getAllSnippets(state.searchQuery || '', state.sortOrder || 'desc');
-  } else if (conversationId) {
-    snippets = getSnippetsForConversation(conversationId, state.searchQuery || '', state.sortOrder || 'desc');
+  
+  // If search is active, use scope filtering
+  if (hasSearchQuery) {
+    // Check if scope is 'project' but no projectId - fallback to 'thread'
+    let scope = state.searchScope || 'thread';
+    if (scope === 'project' && getCurrentProjectId() === null) {
+      scope = 'thread';
+      state.searchScope = 'thread'; // Update state to reflect fallback
+    }
+    snippets = getSnippetsByScope(scope, state.searchQuery || '', state.sortOrder || 'desc');
+  } else {
+    // No search: default to current thread behavior
+    if (isMainPage) {
+      snippets = getAllSnippets('', state.sortOrder || 'desc');
+    } else if (conversationId) {
+      snippets = getSnippetsForConversation(conversationId, '', state.sortOrder || 'desc');
+    }
   }
   
   // Update cache
@@ -499,7 +596,13 @@ function renderUI() {
     onToggleAutoSave: handleToggleAutoSave,
     autoSaveEnabled: state.settings.autoSave,
     onToggleTheme: handleToggleTheme,
-    currentTheme: getCurrentTheme()
+    currentTheme: getCurrentTheme(),
+    totalCount: totalCount,
+    searchQuery: state.searchQuery || '',
+    onSearch: handleSearch,
+    onScopeChange: handleScopeChange,
+    currentScope: state.searchScope || 'thread',
+    currentProjectId: getCurrentProjectId()
   });
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   container.appendChild(panel);
@@ -531,7 +634,27 @@ function updateUI() {
   }
   
   if (panel) {
-    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick);
+    console.log('[updateUI] Calling updatePanel with:', {
+      searchQuery: state.searchQuery || '',
+      searchScope: state.searchScope || 'thread',
+      currentProjectId: getCurrentProjectId(),
+      snippetsCount: currentSnippets.length
+    });
+    updatePanel(
+      panel, 
+      currentSnippets, 
+      handleRemove, 
+      handleSnippetClick, 
+      totalCount, 
+      state.searchQuery || '',
+      handleSearch,
+      handleScopeChange,
+      state.searchScope || 'thread',
+      getCurrentProjectId()
+    );
+  } else {
+    console.warn('[updateUI] Panel not found, calling renderUI instead');
+    renderUI();
   }
 }
 
@@ -922,6 +1045,54 @@ async function handleToggleTheme() {
   
   const themeLabels = { auto: 'Auto', light: 'Light', dark: 'Dark' };
   createToast(`Theme: ${themeLabels[nextTheme]}`);
+}
+
+/**
+ * Handles search query changes.
+ * @param {string} query - Search query
+ */
+function handleSearch(query) {
+  console.log('[handleSearch] Called with query:', query);
+  state.searchQuery = query || '';
+  
+  // Reset scope to thread when search is cleared
+  if (!state.searchQuery || !state.searchQuery.trim()) {
+    state.searchScope = 'thread';
+  }
+  
+  // Invalidate cache to force recompute
+  state.cache.key = null;
+  
+  console.log('[handleSearch] State updated:', {
+    searchQuery: state.searchQuery,
+    searchScope: state.searchScope,
+    hasPanel: !!panel
+  });
+  
+  updateUI();
+}
+
+/**
+ * Handles scope change for search filtering.
+ * @param {string} scope - New scope: 'thread', 'project', or 'all'
+ */
+function handleScopeChange(scope) {
+  // Validate scope
+  if (!['thread', 'project', 'all'].includes(scope)) {
+    return;
+  }
+  
+  // If switching to project but no projectId, fallback to thread
+  if (scope === 'project' && getCurrentProjectId() === null) {
+    scope = 'thread';
+  }
+  
+  state.searchScope = scope;
+  
+  // Invalidate cache to force recompute
+  state.cache.key = null;
+  
+  updateUI();
 }
 
 // Initialize when DOM is ready

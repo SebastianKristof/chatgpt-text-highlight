@@ -3,6 +3,7 @@
  */
 
 import { hashText } from '../shared/hash.js';
+import { getConversationIdFromUrl } from '../shared/urlIds.js';
 
 const HIGHLIGHT_DURATION = 2500; // 2.5 seconds
 
@@ -231,13 +232,5 @@ export function navigateToSource(snippet) {
  * @returns {string|null} Conversation ID or null
  */
 function getConversationId() {
-  const url = window.location.href;
-  
-  const match1 = url.match(/\/c\/([a-f0-9-]+)/);
-  if (match1) return match1[1];
-  
-  const match2 = url.match(/[?&]conversationId=([^&]+)/);
-  if (match2) return match2[1];
-  
-  return null;
+  return getConversationIdFromUrl(window.location.href);
 }

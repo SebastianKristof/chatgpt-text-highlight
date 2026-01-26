@@ -52,9 +52,13 @@ export function createFAB(count, onClick) {
  * @param {string} config.currentTheme - Current theme: 'light', 'dark', or 'auto' (optional)
  * @param {number} config.totalCount - Total count for search counter (optional)
  * @param {string} config.searchQuery - Current search query (optional)
+ * @param {Function} config.onScopeChange - Scope change handler (optional)
+ * @param {string} config.currentScope - Current scope: 'thread', 'project', or 'all' (optional)
+ * @param {string|null} config.currentProjectId - Current project ID (optional)
+ * @param {Function} config.onSearch - Search handler (optional)
  * @returns {HTMLElement} Panel element
  */
-export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, totalCount, searchQuery }) {
+export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSnippetClick, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, totalCount, searchQuery, onScopeChange, currentScope, currentProjectId, onSearch }) {
   const panel = document.createElement('div');
   panel.className = 'ce-panel';
   panel.setAttribute('role', 'dialog');
@@ -71,7 +75,11 @@ export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSn
     currentTheme,
     snippetCount: snippets.length,
     totalCount: totalCount !== undefined ? totalCount : snippets.length,
-    searchQuery: searchQuery || ''
+    searchQuery: searchQuery || '',
+    onSearch,
+    onScopeChange,
+    currentScope: currentScope || 'thread',
+    currentProjectId: currentProjectId || null
   });
   const list = createSnippetList({ snippets, onRemove, onSnippetClick });
   const footer = createPanelFooter();
@@ -86,7 +94,7 @@ export function createPanel({ snippets, onCopy, onClear, onClose, onRemove, onSn
 /**
  * Creates the panel header.
  */
-function createPanelHeader({ onCopy, onClear, onClose, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, snippetCount, totalCount, searchQuery }) {
+function createPanelHeader({ onCopy, onClear, onClose, onManage, onToggleAutoSave, autoSaveEnabled, onToggleTheme, currentTheme, snippetCount, totalCount, searchQuery, onSearch, onScopeChange, currentScope, currentProjectId }) {
   const header = document.createElement('div');
   header.className = 'ce-panel-header';
   
@@ -112,6 +120,48 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onToggleAutoSav
   
   titleRow.appendChild(title);
   titleRow.appendChild(closeBtn);
+  
+  // Search box
+  if (onSearch) {
+    const searchContainer = document.createElement('div');
+    searchContainer.className = 'ce-search-container';
+    const searchWrapper = document.createElement('div');
+    searchWrapper.className = 'ce-search-wrapper';
+    
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'ce-search-input';
+    searchInput.placeholder = 'Search snippets...';
+    searchInput.value = searchQuery || '';
+    searchInput.setAttribute('aria-label', 'Search snippets');
+    searchInput.addEventListener('input', (e) => {
+      console.log('[Search Input] Input event, value:', e.target.value);
+      if (onSearch) {
+        onSearch(e.target.value);
+      } else {
+        console.warn('[Search Input] onSearch handler not provided!');
+      }
+    });
+    
+    const clearSearchBtn = document.createElement('button');
+    clearSearchBtn.className = 'ce-search-clear';
+    clearSearchBtn.innerHTML = '×';
+    clearSearchBtn.setAttribute('aria-label', 'Clear search');
+    clearSearchBtn.title = 'Clear search';
+    clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
+    clearSearchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      searchInput.value = '';
+      if (onSearch) {
+        onSearch('');
+      }
+    });
+    
+    searchWrapper.appendChild(searchInput);
+    searchWrapper.appendChild(clearSearchBtn);
+    searchContainer.appendChild(searchWrapper);
+    header.appendChild(searchContainer);
+  }
   
   // Actions row (without close button)
   const actions = document.createElement('div');
@@ -166,6 +216,38 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onToggleAutoSav
   actions.appendChild(manageBtn);
   
   header.appendChild(titleRow);
+  
+  // Scope selector (only shown when search is active)
+  // Add it right after search container, before actions
+  if (searchQuery && searchQuery.trim() && onScopeChange) {
+    const scopeSelector = document.createElement('div');
+    scopeSelector.className = 'ce-scope-selector';
+    
+    const scopeOptions = [
+      { value: 'thread', label: 'Thread' },
+      ...(currentProjectId ? [{ value: 'project', label: 'Project' }] : []),
+      { value: 'all', label: 'All' }
+    ];
+    
+    scopeOptions.forEach(option => {
+      const btn = document.createElement('button');
+      btn.className = 'ce-scope-btn';
+      btn.textContent = option.label;
+      btn.setAttribute('aria-label', `Filter by ${option.label}`);
+      if (currentScope === option.value) {
+        btn.classList.add('active');
+      }
+      btn.addEventListener('click', () => {
+        if (onScopeChange) {
+          onScopeChange(option.value);
+        }
+      });
+      scopeSelector.appendChild(btn);
+    });
+    
+    header.appendChild(scopeSelector);
+  }
+  
   header.appendChild(actions);
   
   return header;
@@ -519,8 +601,12 @@ export function updateFABCount(fab, count) {
  * @param {Function} onSnippetClick - Snippet click handler
  * @param {number} totalCount - Total count for search counter (optional)
  * @param {string} searchQuery - Current search query (optional)
+ * @param {Function} onSearch - Search handler (optional)
+ * @param {Function} onScopeChange - Scope change handler (optional)
+ * @param {string} currentScope - Current scope (optional)
+ * @param {string|null} currentProjectId - Current project ID (optional)
  */
-export function updatePanel(panel, snippets, onRemove, onSnippetClick, totalCount, searchQuery) {
+export function updatePanel(panel, snippets, onRemove, onSnippetClick, totalCount, searchQuery, onSearch, onScopeChange, currentScope, currentProjectId) {
   const list = panel.querySelector('.ce-snippet-list');
   if (!list) return;
   
@@ -539,6 +625,105 @@ export function updatePanel(panel, snippets, onRemove, onSnippetClick, totalCoun
       const item = createSnippetItem(snippet, index, onRemove, onSnippetClick);
       list.appendChild(item);
     });
+  }
+  
+  // Update search input and clear button
+  const searchInput = panel.querySelector('.ce-search-input');
+  const clearSearchBtn = panel.querySelector('.ce-search-clear');
+  if (searchInput && searchInput.value !== (searchQuery || '')) {
+    searchInput.value = searchQuery || '';
+  }
+  if (clearSearchBtn) {
+    clearSearchBtn.style.display = (searchQuery && searchQuery.trim()) ? 'flex' : 'none';
+  }
+  
+  // Update scope selector
+  const scopeSelector = panel.querySelector('.ce-scope-selector');
+  const hasSearchQuery = searchQuery && searchQuery.trim();
+  
+  console.log('[updatePanel] Scope selector check:', {
+    hasSearchQuery,
+    hasOnScopeChange: !!onScopeChange,
+    existingScopeSelector: !!scopeSelector,
+    searchQuery: searchQuery || '(empty)',
+    currentScope: currentScope || 'thread',
+    currentProjectId: currentProjectId || null
+  });
+  
+  if (hasSearchQuery && onScopeChange) {
+    // Create scope selector if it doesn't exist
+    if (!scopeSelector) {
+      const header = panel.querySelector('.ce-panel-header');
+      const searchContainer = panel.querySelector('.ce-search-container');
+      const actions = panel.querySelector('.ce-panel-actions');
+      
+      if (header) {
+        const newScopeSelector = document.createElement('div');
+        newScopeSelector.className = 'ce-scope-selector';
+        
+        const scopeOptions = [
+          { value: 'thread', label: 'Thread' },
+          ...(currentProjectId ? [{ value: 'project', label: 'Project' }] : []),
+          { value: 'all', label: 'All' }
+        ];
+        
+        scopeOptions.forEach(option => {
+          const btn = document.createElement('button');
+          btn.className = 'ce-scope-btn';
+          btn.textContent = option.label;
+          btn.setAttribute('aria-label', `Filter by ${option.label}`);
+          if (currentScope === option.value) {
+            btn.classList.add('active');
+          }
+          btn.addEventListener('click', () => {
+            if (onScopeChange) {
+              onScopeChange(option.value);
+            }
+          });
+          newScopeSelector.appendChild(btn);
+        });
+        
+        // Insert after search container, before actions
+        if (searchContainer) {
+          // Insert right after search container
+          if (searchContainer.nextSibling) {
+            header.insertBefore(newScopeSelector, searchContainer.nextSibling);
+          } else {
+            header.appendChild(newScopeSelector);
+          }
+        } else if (actions) {
+          header.insertBefore(newScopeSelector, actions);
+        } else {
+          header.appendChild(newScopeSelector);
+        }
+        
+        // Debug: verify it was added
+        console.log('[Scope Selector] Created and inserted', {
+          hasSearchContainer: !!searchContainer,
+          hasActions: !!actions,
+          optionsCount: scopeOptions.length,
+          currentScope: currentScope
+        });
+      }
+    } else {
+      // Update existing scope selector buttons
+      const buttons = scopeSelector.querySelectorAll('.ce-scope-btn');
+      buttons.forEach(btn => {
+        const btnText = btn.textContent.trim().toLowerCase();
+        let btnScope = 'thread';
+        if (btnText === 'project') btnScope = 'project';
+        else if (btnText === 'all') btnScope = 'all';
+        
+        if (currentScope === btnScope) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+  } else if (scopeSelector && !hasSearchQuery) {
+    // Remove scope selector when search is cleared
+    scopeSelector.remove();
   }
   
   // Update title with search counter if search is active

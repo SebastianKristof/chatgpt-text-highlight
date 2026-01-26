@@ -297,6 +297,50 @@
   color: var(--ce-text-primary);
 }
 
+/* Scope Selector */
+.ce-scope-selector {
+  display: flex !important;
+  gap: 4px;
+  padding: 8px 0;
+  margin-top: 8px;
+  margin-bottom: 8px;
+  border-top: 1px solid var(--ce-border-color);
+  width: 100%;
+  box-sizing: border-box;
+  opacity: 1 !important;
+  visibility: visible !important;
+  height: auto !important;
+  min-height: 40px;
+}
+
+.ce-scope-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--ce-border-color);
+  border-radius: 6px;
+  background: var(--ce-bg-primary);
+  color: var(--ce-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  min-height: 32px;
+}
+
+.ce-scope-btn:hover {
+  background: var(--ce-bg-hover);
+  border-color: var(--ce-border-hover);
+  color: var(--ce-text-primary);
+}
+
+.ce-scope-btn.active {
+  background: var(--ce-bg-hover);
+  border-color: var(--ce-border-hover);
+  color: var(--ce-text-primary);
+  font-weight: 600;
+}
+
 .ce-panel-title {
   margin: 0;
   font-size: 20px;

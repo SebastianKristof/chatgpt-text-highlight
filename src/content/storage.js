@@ -16,6 +16,7 @@ function createEmptyStorage() {
     snippetsById: {},
     index: {
       byThread: {},
+      byProject: {},
       byTime: []
     },
     meta: {
@@ -37,6 +38,7 @@ function migrateV1ToV2(v1Data) {
 
   const snippetsById = {};
   const byThread = {};
+  const byProject = {};
   const byTime = [];
 
   // Process each snippet
@@ -83,6 +85,7 @@ function migrateV1ToV2(v1Data) {
     snippetsById,
     index: {
       byThread,
+      byProject,
       byTime
     },
     meta: {
@@ -129,6 +132,10 @@ export async function loadStorage() {
       if (!data.snippetsById || !data.index) {
         console.warn('Invalid v2 structure, creating empty storage');
         return createEmptyStorage();
+      }
+      // Ensure byProject index exists for backward compatibility
+      if (!data.index.byProject) {
+        data.index.byProject = {};
       }
       return data;
     }
@@ -195,12 +202,15 @@ export function upsertSnippet(storage, snippet) {
   const snippetsById = { ...storage.snippetsById };
   const index = {
     byThread: { ...storage.index.byThread },
+    byProject: { ...storage.index.byProject },
     byTime: [...storage.index.byTime]
   };
 
   const existingSnippet = snippetsById[snippet.id];
   const oldConversationId = existingSnippet?.conversationId || null;
   const newConversationId = snippet.conversationId || null;
+  const oldProjectId = existingSnippet?.projectId || null;
+  const newProjectId = snippet.projectId || null;
 
   // Ensure createdAt exists
   if (!snippet.createdAt) {
@@ -235,6 +245,33 @@ export function upsertSnippet(storage, snippet) {
   } else if (newConversationId !== null && !index.byThread[newConversationId].includes(snippet.id)) {
     // Existing snippet but not in thread index (shouldn't happen, but handle it)
     index.byThread[newConversationId].push(snippet.id);
+  }
+
+  // Update byProject index if projectId changed
+  if (oldProjectId !== newProjectId) {
+    // Remove from old project
+    if (oldProjectId !== null && index.byProject[oldProjectId]) {
+      index.byProject[oldProjectId] = index.byProject[oldProjectId].filter(id => id !== snippet.id);
+      if (index.byProject[oldProjectId].length === 0) {
+        delete index.byProject[oldProjectId];
+      }
+    }
+
+    // Add to new project
+    if (newProjectId !== null) {
+      if (!index.byProject[newProjectId]) {
+        index.byProject[newProjectId] = [];
+      }
+      if (!index.byProject[newProjectId].includes(snippet.id)) {
+        index.byProject[newProjectId].push(snippet.id);
+      }
+    }
+  } else if (newProjectId !== null && !index.byProject[newProjectId]) {
+    // New snippet, add to project
+    index.byProject[newProjectId] = [snippet.id];
+  } else if (newProjectId !== null && !index.byProject[newProjectId].includes(snippet.id)) {
+    // Existing snippet but not in project index (shouldn't happen, but handle it)
+    index.byProject[newProjectId].push(snippet.id);
   }
 
   // Update byTime index
@@ -282,6 +319,7 @@ export function removeSnippet(storage, id) {
 
   const index = {
     byThread: { ...storage.index.byThread },
+    byProject: { ...storage.index.byProject },
     byTime: [...storage.index.byTime]
   };
 
@@ -291,6 +329,15 @@ export function removeSnippet(storage, id) {
     index.byThread[conversationId] = index.byThread[conversationId].filter(sid => sid !== id);
     if (index.byThread[conversationId].length === 0) {
       delete index.byThread[conversationId];
+    }
+  }
+
+  // Remove from byProject index
+  const projectId = snippet.projectId || null;
+  if (projectId !== null && index.byProject[projectId]) {
+    index.byProject[projectId] = index.byProject[projectId].filter(sid => sid !== id);
+    if (index.byProject[projectId].length === 0) {
+      delete index.byProject[projectId];
     }
   }
 
