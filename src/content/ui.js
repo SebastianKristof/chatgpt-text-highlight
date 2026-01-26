@@ -214,7 +214,7 @@ function createSnippetItem(snippet, index, onRemove, onSnippetClick) {
   const meta = document.createElement('div');
   meta.className = 'ce-snippet-meta';
   
-  const timestamp = new Date(snippet.timestamp);
+  const timestamp = new Date(snippet.createdAt || snippet.timestamp || Date.now());
   const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const timeEl = document.createElement('span');
   timeEl.textContent = timeStr;

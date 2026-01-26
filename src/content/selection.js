@@ -202,7 +202,7 @@ export function buildSnippetFromSelection() {
     text: finalText,
     conversationId,
     anchor,
-    timestamp: Date.now(),
+    createdAt: Date.now(),
     truncated
   };
 }

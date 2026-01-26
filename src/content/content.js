@@ -3,20 +3,45 @@
  * Orchestrates selection, state management, UI, and persistence.
  */
 
-import { loadSnippets, saveSnippets } from './storage.js';
-import { buildSnippetFromSelection } from './selection.js';
+import { loadStorage, saveStorage, upsertSnippet, removeSnippet, clearThread, clearAll } from './storage.js';
+import { buildSnippetFromSelection, getConversationId } from './selection.js';
 import { navigateToSource } from './navigation.js';
 import { hashText } from '../shared/hash.js';
 import { createContainer, createFAB, createPanel, createImportExportModal, createToast, updateFABCount, updatePanel } from './ui.js';
 
 // State
 let state = {
-  items: [],
+  storage: {
+    snippetsById: {},
+    index: {
+      byThread: {},
+      byTime: []
+    },
+    meta: {
+      lastUpdatedAt: 0,
+      totalCount: 0
+    }
+  },
   panelOpen: false,
   settings: {
     autoSave: true, // Default to auto-save enabled
     theme: 'auto' // Default to auto (follows system)
-  }
+  },
+  searchQuery: '',
+  sortOrder: 'desc',
+  // Cache for performance optimization
+  cache: {
+    key: null,
+    currentSnippets: [],
+    totalSnippets: [],
+    itemsVersion: 0
+  },
+  // Selection cache
+  selectionCache: {
+    visibleIds: new Set(),
+    selectedVisibleCount: 0
+  },
+  selectedIds: new Set()
 };
 
 // Theme management
@@ -34,7 +59,7 @@ let panel = null;
 let importExportModal = null;
 let modalOpen = false;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * Debounce utility function
@@ -79,7 +104,7 @@ function normalizeImportedSnippet(raw) {
     text,
     conversationId: typeof raw.conversationId === 'string' ? raw.conversationId : null,
     anchor: raw.anchor && typeof raw.anchor === 'object' ? raw.anchor : null,
-    timestamp: Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now(),
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : (Number.isFinite(raw.timestamp) ? raw.timestamp : Date.now()),
     truncated: Boolean(raw.truncated)
   };
 }
@@ -188,6 +213,105 @@ function exportFilename(extension) {
 }
 
 /**
+ * Gets a snippet by ID.
+ * @param {string} id - Snippet ID
+ * @returns {Object|null} Snippet object or null
+ */
+function getSnippetById(id) {
+  return state.storage.snippetsById[id] || null;
+}
+
+/**
+ * Gets total count of snippets for a conversation.
+ * @param {string|null} conversationId - Conversation ID or null for all
+ * @returns {number} Count of snippets
+ */
+function getTotalCountForConversation(conversationId) {
+  if (conversationId === null) {
+    return state.storage.meta.totalCount || 0;
+  }
+  const threadIds = state.storage.index.byThread[conversationId] || [];
+  return threadIds.length;
+}
+
+/**
+ * Gets all snippets with optional filtering and sorting.
+ * @param {string} searchQuery - Optional search query
+ * @param {string} sortOrder - 'asc' or 'desc' (default: 'desc')
+ * @returns {Array} Array of snippet objects
+ */
+function getAllSnippets(searchQuery = '', sortOrder = 'desc') {
+  const { snippetsById, index } = state.storage;
+  let snippets = [];
+  
+  // Get all snippets from byTime index (already sorted by createdAt desc)
+  index.byTime.forEach(id => {
+    const snippet = snippetsById[id];
+    if (snippet) {
+      snippets.push(snippet);
+    }
+  });
+  
+  // Apply search filter
+  if (searchQuery && searchQuery.trim()) {
+    const query = searchQuery.toLowerCase().trim();
+    snippets = snippets.filter(snippet => 
+      snippet.text && snippet.text.toLowerCase().includes(query)
+    );
+  }
+  
+  // Apply sort order
+  if (sortOrder === 'asc') {
+    snippets.reverse();
+  }
+  
+  return snippets;
+}
+
+/**
+ * Gets snippets for a specific conversation with optional filtering and sorting.
+ * @param {string|null} conversationId - Conversation ID or null for all
+ * @param {string} searchQuery - Optional search query
+ * @param {string} sortOrder - 'asc' or 'desc' (default: 'desc')
+ * @returns {Array} Array of snippet objects
+ */
+function getSnippetsForConversation(conversationId, searchQuery = '', sortOrder = 'desc') {
+  const { snippetsById, index } = state.storage;
+  let snippets = [];
+  
+  if (conversationId === null) {
+    // Get all snippets
+    return getAllSnippets(searchQuery, sortOrder);
+  }
+  
+  // Get snippets for this conversation from index
+  const threadIds = index.byThread[conversationId] || [];
+  threadIds.forEach(id => {
+    const snippet = snippetsById[id];
+    if (snippet) {
+      snippets.push(snippet);
+    }
+  });
+  
+  // Sort by createdAt
+  snippets.sort((a, b) => {
+    const aTime = a.createdAt || 0;
+    const bTime = b.createdAt || 0;
+    return sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
+  });
+  
+  // Apply search filter
+  if (searchQuery && searchQuery.trim()) {
+    const query = searchQuery.toLowerCase().trim();
+    snippets = snippets.filter(snippet => 
+      snippet.text && snippet.text.toLowerCase().includes(query)
+    );
+  }
+  
+  return snippets;
+}
+
+/**
  * Initializes the extension.
  */
 async function init() {
@@ -216,8 +340,9 @@ async function init() {
   setupEventListeners();
   
   // Show toast if snippets were loaded
-  if (state.items.length > 0) {
-    createToast(`Loaded ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+  const totalCount = state.storage.meta.totalCount || 0;
+  if (totalCount > 0) {
+    createToast(`Loaded ${totalCount} snippet${totalCount !== 1 ? 's' : ''}`);
   }
 }
 
@@ -251,8 +376,15 @@ function getCurrentTheme() {
  */
 async function loadState() {
   try {
-    const items = await loadSnippets();
-    state.items = items;
+    const storage = await loadStorage();
+    state.storage = storage;
+    
+    // Reset cache
+    state.cache.key = null;
+    state.cache.itemsVersion = 0;
+    state.selectionCache.visibleIds = new Set();
+    state.selectionCache.selectedVisibleCount = 0;
+    state.selectedIds = new Set();
     
     // Load settings
     const settingsResult = await chrome.storage.local.get('settings');
@@ -270,7 +402,9 @@ async function loadState() {
  */
 async function persistState() {
   try {
-    await saveSnippets(state.items);
+    await saveStorage(state.storage);
+    // Increment itemsVersion for cache invalidation
+    state.cache.itemsVersion += 1;
     // Save settings separately
     await chrome.storage.local.set({ settings: state.settings });
   } catch (error) {
@@ -284,14 +418,70 @@ async function persistState() {
 }
 
 /**
+ * Gets current conversation snippets with caching.
+ * @returns {Array} Array of snippet objects for current conversation
+ */
+function getCurrentConversationSnippets() {
+  const conversationId = getConversationId();
+  const url = window.location.href;
+  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  
+  // Build cache key
+  const cacheKey = JSON.stringify({
+    conversationId,
+    isMainPage,
+    searchQuery: state.searchQuery || '',
+    sortOrder: state.sortOrder || 'desc',
+    itemsVersion: state.cache.itemsVersion
+  });
+  
+  // Check cache
+  if (state.cache.key === cacheKey && state.cache.currentSnippets.length >= 0) {
+    return state.cache.currentSnippets;
+  }
+  
+  // Recompute
+  let snippets = [];
+  if (isMainPage) {
+    snippets = getAllSnippets(state.searchQuery || '', state.sortOrder || 'desc');
+  } else if (conversationId) {
+    snippets = getSnippetsForConversation(conversationId, state.searchQuery || '', state.sortOrder || 'desc');
+  }
+  
+  // Update cache
+  state.cache.key = cacheKey;
+  state.cache.currentSnippets = snippets;
+  
+  // Update selection cache
+  state.selectionCache.visibleIds = new Set(snippets.map(s => s.id));
+  state.selectionCache.selectedVisibleCount = snippets.filter(s => state.selectedIds.has(s.id)).length;
+  
+  return snippets;
+}
+
+/**
  * Renders the UI.
  */
 function renderUI() {
+  // Get snippets for current conversation
+  const currentSnippets = getCurrentConversationSnippets();
+  const conversationId = getConversationId();
+  const url = window.location.href;
+  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  
+  // Get total count for current conversation
+  let totalCount = 0;
+  if (isMainPage) {
+    totalCount = state.storage.meta.totalCount || 0;
+  } else if (conversationId) {
+    totalCount = getTotalCountForConversation(conversationId);
+  }
+  
   // Create FAB
   if (fab && fab.parentNode) {
     fab.parentNode.removeChild(fab);
   }
-  fab = createFAB(state.items.length, togglePanel);
+  fab = createFAB(totalCount, togglePanel);
   container.appendChild(fab);
   
   // Create panel (initially hidden)
@@ -299,7 +489,7 @@ function renderUI() {
     panel.parentNode.removeChild(panel);
   }
   panel = createPanel({
-    snippets: state.items,
+    snippets: currentSnippets,
     onCopy: handleCopy,
     onClear: handleClear,
     onClose: handleClose,
@@ -319,12 +509,29 @@ function renderUI() {
  * Updates the UI after state changes.
  */
 function updateUI() {
+  // Invalidate cache to force recompute
+  state.cache.key = null;
+  
+  // Get current snippets
+  const currentSnippets = getCurrentConversationSnippets();
+  const conversationId = getConversationId();
+  const url = window.location.href;
+  const isMainPage = !url.includes('/c/') && !url.includes('conversationId=');
+  
+  // Get total count for current conversation
+  let totalCount = 0;
+  if (isMainPage) {
+    totalCount = state.storage.meta.totalCount || 0;
+  } else if (conversationId) {
+    totalCount = getTotalCountForConversation(conversationId);
+  }
+  
   if (fab) {
-    updateFABCount(fab, state.items.length);
+    updateFABCount(fab, totalCount);
   }
   
   if (panel) {
-    updatePanel(panel, state.items, handleRemove, handleSnippetClick);
+    updatePanel(panel, currentSnippets, handleRemove, handleSnippetClick);
   }
 }
 
@@ -404,7 +611,21 @@ function handleSelection(e) {
  * Adds a snippet to state.
  */
 function addSnippet(snippet) {
-  state.items.push(snippet);
+  // Ensure snippet has required fields
+  if (!snippet.id) {
+    snippet.id = generateSnippetId();
+  }
+  if (!snippet.createdAt) {
+    snippet.createdAt = Date.now();
+  }
+  
+  // Use upsertSnippet to add/update
+  state.storage = upsertSnippet(state.storage, snippet);
+  
+  // Invalidate cache
+  state.cache.key = null;
+  state.cache.itemsVersion += 1;
+  
   updateUI();
   persistState();
 }
@@ -413,7 +634,15 @@ function addSnippet(snippet) {
  * Removes a snippet by ID.
  */
 function handleRemove(id) {
-  state.items = state.items.filter(item => item.id !== id);
+  state.storage = removeSnippet(state.storage, id);
+  
+  // Remove from selection if selected
+  state.selectedIds.delete(id);
+  
+  // Invalidate cache
+  state.cache.key = null;
+  state.cache.itemsVersion += 1;
+  
   updateUI();
   persistState();
   createToast('Snippet removed');
@@ -423,10 +652,20 @@ function handleRemove(id) {
  * Clears all snippets.
  */
 function handleClear() {
-  if (state.items.length === 0) return;
+  const totalCount = state.storage.meta.totalCount || 0;
+  if (totalCount === 0) return;
   
-  if (confirm(`Clear all ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}?`)) {
-    state.items = [];
+  if (confirm(`Clear all ${totalCount} snippet${totalCount !== 1 ? 's' : ''}?`)) {
+    state.storage = clearAll(state.storage);
+    
+    // Clear selection
+    state.selectedIds.clear();
+    state.selectionCache.selectedVisibleCount = 0;
+    
+    // Invalidate cache
+    state.cache.key = null;
+    state.cache.itemsVersion += 1;
+    
     updateUI();
     persistState();
     createToast('All snippets cleared');
@@ -437,16 +676,17 @@ function handleClear() {
  * Copies all snippets to clipboard.
  */
 async function handleCopy() {
-  if (state.items.length === 0) {
+  const allSnippets = getAllSnippets();
+  if (allSnippets.length === 0) {
     createToast('No snippets to copy');
     return;
   }
   
-  const markdown = buildMarkdownFromSnippets(state.items);
+  const markdown = buildMarkdownFromSnippets(allSnippets);
   
   try {
     await navigator.clipboard.writeText(markdown);
-    createToast(`Copied ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''} to clipboard`);
+    createToast(`Copied ${allSnippets.length} snippet${allSnippets.length !== 1 ? 's' : ''} to clipboard`);
   } catch (error) {
     console.error('Failed to copy:', error);
     createToast('Failed to copy to clipboard');
@@ -455,8 +695,9 @@ async function handleCopy() {
 
 function handleOpenImportExport() {
   if (modalOpen) return;
+  const totalCount = state.storage.meta.totalCount || 0;
   importExportModal = createImportExportModal({
-    snippetCount: state.items.length,
+    snippetCount: totalCount,
     onClose: handleCloseImportExport,
     onExportJson: handleExportJson,
     onExportMarkdown: handleExportMarkdown,
@@ -475,27 +716,40 @@ function handleCloseImportExport() {
 }
 
 function handleExportJson() {
-  if (state.items.length === 0) {
+  const allSnippets = getAllSnippets();
+  if (allSnippets.length === 0) {
     createToast('No snippets to export');
     return;
   }
+  
+  // Convert v2 to v1 format for backward compatibility
+  const items = allSnippets.map(snippet => {
+    const exported = { ...snippet };
+    // Convert createdAt back to timestamp for v1 compatibility
+    if (exported.createdAt && !exported.timestamp) {
+      exported.timestamp = exported.createdAt;
+    }
+    return exported;
+  });
+  
   const payload = {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: 1, // Export as v1 for compatibility
     exportedAt: new Date().toISOString(),
-    items: state.items
+    items
   };
   downloadTextFile(exportFilename('json'), JSON.stringify(payload, null, 2), 'application/json');
-  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+  createToast(`Exported ${allSnippets.length} snippet${allSnippets.length !== 1 ? 's' : ''}`);
 }
 
 function handleExportMarkdown() {
-  if (state.items.length === 0) {
+  const allSnippets = getAllSnippets();
+  if (allSnippets.length === 0) {
     createToast('No snippets to export');
     return;
   }
-  const markdown = buildMarkdownFromSnippets(state.items);
+  const markdown = buildMarkdownFromSnippets(allSnippets);
   downloadTextFile(exportFilename('md'), markdown, 'text/markdown');
-  createToast(`Exported ${state.items.length} snippet${state.items.length !== 1 ? 's' : ''}`);
+  createToast(`Exported ${allSnippets.length} snippet${allSnippets.length !== 1 ? 's' : ''}`);
 }
 
 async function handlePreviewImport(file, mode, setStatus, setPreview, setPending) {
@@ -517,15 +771,18 @@ async function handlePreviewImport(file, mode, setStatus, setPreview, setPending
       return;
     }
     const { items: expanded, duplicates } = expandImportDuplicates(normalized);
+    const currentCount = state.storage.meta.totalCount || 0;
     if (mode === 'replace') {
-      const preview = `Preview: ${expanded.length} snippet${expanded.length !== 1 ? 's' : ''} will replace ${state.items.length}.` +
+      const preview = `Preview: ${expanded.length} snippet${expanded.length !== 1 ? 's' : ''} will replace ${currentCount}.` +
         (duplicates ? ` ${duplicates} duplicate${duplicates !== 1 ? 's' : ''} in file will be labeled.` : '');
       setStatus('Preview ready.', 'success');
       setPreview(preview, 'success');
       setPending({ items: expanded });
       return;
     }
-    const { items: merged, added, skipped } = mergeSnippets(state.items, expanded);
+    // For merge mode, we need to check against existing snippets
+    const existingSnippets = getAllSnippets();
+    const { items: merged, added, skipped } = mergeSnippets(existingSnippets, expanded);
     const preview = `Preview: add ${added} new, skip ${skipped} duplicate${skipped !== 1 ? 's' : ''}.` +
       ` Total after import: ${merged.length}.` +
       (duplicates ? ` ${duplicates} duplicate${duplicates !== 1 ? 's' : ''} in file will be labeled.` : '');
@@ -546,8 +803,25 @@ async function handleConfirmImport(pending, mode, setStatus, setPreview, setPend
       setStatus('No preview data available.', 'error');
       return;
     }
+    
     if (mode === 'replace') {
-      state.items = pending.items;
+      // Clear all and add new snippets
+      state.storage = clearAll(state.storage);
+      state.selectedIds.clear();
+      state.selectionCache.selectedVisibleCount = 0;
+      
+      // Add all imported snippets
+      for (const snippet of pending.items) {
+        if (!snippet.createdAt) {
+          snippet.createdAt = snippet.timestamp || Date.now();
+        }
+        state.storage = upsertSnippet(state.storage, snippet);
+      }
+      
+      // Invalidate cache
+      state.cache.key = null;
+      state.cache.itemsVersion += 1;
+      
       updateUI();
       await persistState();
       setStatus(`Imported ${pending.items.length} snippet${pending.items.length !== 1 ? 's' : ''}.`, 'success');
@@ -555,8 +829,24 @@ async function handleConfirmImport(pending, mode, setStatus, setPreview, setPend
       setPending(null);
       return;
     }
-    const { items: merged, added, skipped } = mergeSnippets(state.items, pending.items);
-    state.items = merged;
+    
+    // Merge mode: add new snippets, skip duplicates
+    const existingSnippets = getAllSnippets();
+    const { items: merged, added, skipped } = mergeSnippets(existingSnippets, pending.items);
+    
+    // Clear and rebuild storage with merged snippets
+    state.storage = clearAll(state.storage);
+    for (const snippet of merged) {
+      if (!snippet.createdAt) {
+        snippet.createdAt = snippet.timestamp || Date.now();
+      }
+      state.storage = upsertSnippet(state.storage, snippet);
+    }
+    
+    // Invalidate cache
+    state.cache.key = null;
+    state.cache.itemsVersion += 1;
+    
     updateUI();
     await persistState();
     const suffix = skipped ? ` (${skipped} duplicates skipped)` : '';
