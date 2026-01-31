@@ -20,7 +20,7 @@ A Chrome/Edge extension (Manifest V3) that lets you collect text snippets from C
 
 ## Development
 
-The extension uses ES6 modules. Chrome/Edge Manifest V3 supports ES modules in content scripts, so the extension should work directly without a bundler.
+Source lives in `src/` and is bundled for production.
 
 ### Building for Production
 
@@ -31,9 +31,9 @@ npm run build
 ```
 
 This will:
-- Minify `content.js` and `content.css`
-- Copy `manifest.json` and icons
-- Output everything to the `dist/` directory
+- Bundle `src/content/content.js` into `content.js`
+- Minify `content.js` and `content.css` into `dist/`
+- Copy `manifest.json` and icons to `dist/`
 
 The `dist/` folder contains the production-ready extension that you can load into Chrome/Edge or package for the Chrome Web Store.
 
