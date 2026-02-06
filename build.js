@@ -18,23 +18,20 @@ if (!existsSync(distDir)) {
   mkdirSync(distDir, { recursive: true });
 }
 
-async function buildContentScript({ outfile, minify }) {
+async function minifyJS() {
+  console.log('Minifying content.js...');
+  
   await build({
-    entryPoints: ['src/content/content.js'],
-    bundle: true,
-    minify,
-    outfile,
+    entryPoints: ['content.js'],
+    bundle: false, // Already bundled
+    minify: true,
+    outfile: join(distDir, 'content.js'),
     format: 'iife',
     target: 'es2020',
     legalComments: 'none',
   });
-}
-
-async function buildJS() {
-  console.log('Building content.js...');
-  await buildContentScript({ outfile: 'content.js', minify: false });
-  await buildContentScript({ outfile: join(distDir, 'content.js'), minify: true });
-  console.log('✓ content.js built');
+  
+  console.log('✓ content.js minified');
 }
 
 async function minifyCSS() {
@@ -77,7 +74,7 @@ function copyIcons() {
 async function runBuild() {
   try {
     console.log('Starting build...\n');
-    await buildJS();
+    await minifyJS();
     await minifyCSS();
     copyManifest();
     copyIcons();

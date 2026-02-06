@@ -89,7 +89,8 @@ export function applyTransientHighlight(element, startOffset, endOffset) {
   let startNodeOffset = 0;
   let endNodeOffset = 0;
   
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+  let node;
+  while ((node = walker.nextNode())) {
     const nodeText = node.textContent || '';
     const normalizedNodeText = nodeText.replace(/\s+/g, ' ');
     const nodeLength = normalizedNodeText.length;
