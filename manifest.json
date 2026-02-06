@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Text Highlight",
+  "name": "GPT Snippets",
   "version": "1.0.0",
   "description": "Collect, search, and reuse the best parts of ChatGPT responses",
   "permissions": [
@@ -23,6 +23,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "web_accessible_resources": []
+  }
 }

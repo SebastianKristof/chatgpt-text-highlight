@@ -135,11 +135,8 @@ function createPanelHeader({ onCopy, onClear, onClose, onManage, onToggleAutoSav
     searchInput.value = searchQuery || '';
     searchInput.setAttribute('aria-label', 'Search snippets');
     searchInput.addEventListener('input', (e) => {
-      console.log('[Search Input] Input event, value:', e.target.value);
       if (onSearch) {
         onSearch(e.target.value);
-      } else {
-        console.warn('[Search Input] onSearch handler not provided!');
       }
     });
     

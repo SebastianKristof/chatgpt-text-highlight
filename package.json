@@ -1,7 +1,7 @@
 {
   "name": "chatgpt-text-highlight",
   "version": "1.0.0",
-  "description": "Collect, search, and reuse the best parts of ChatGPT responses",
+  "description": "Chrome/Edge extension for collecting text snippets from ChatGPT conversations",
   "type": "module",
   "scripts": {
     "build": "node build.js",

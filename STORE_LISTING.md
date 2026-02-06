@@ -1,7 +1,7 @@
 # Chrome Web Store Listing Copy
 
 ## Suggested name
-Highlight & Save ChatGPT Snippets
+GPT Snippets
 
 ## Short description (1–2 lines)
 Save the best parts of ChatGPT conversations with one click. Build a personal snippets library.
@@ -24,7 +24,7 @@ This extension lets you highlight and save only the useful parts.
 - Developers
 
 **Privacy**
-No tracking. No analytics. All data stored locally in your browser.
+No tracking. No analytics. All data stored locally in your browser. Support: entorscws1@gmail.com.
 
 ## Permissions justification (for review)
 - `storage`: Saves your snippets locally so they persist across sessions.
