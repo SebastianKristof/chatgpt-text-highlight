@@ -65,19 +65,162 @@ function findSelectionOffsets(messageText, selectionText) {
 // ============================================================================
 
 const STORAGE_KEY = 'snippets';
-const SCHEMA_VERSION = 1;
+const STORAGE_SCHEMA_VERSION = 2;
+const EXPORT_SCHEMA_VERSION = 1;
+
+function createEmptyStorageV2() {
+  return {
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    snippetsById: {},
+    index: {
+      byThread: {},
+      byProject: {},
+      byTime: []
+    },
+    meta: {
+      lastUpdatedAt: Date.now(),
+      totalCount: 0
+    }
+  };
+}
+
+function normalizeSnippetForStorage(snippet) {
+  if (!snippet || typeof snippet !== 'object') return null;
+  const id = typeof snippet.id === 'string' && snippet.id.trim()
+    ? snippet.id
+    : null;
+  if (!id) return null;
+
+  const timestamp = Number.isFinite(snippet.timestamp)
+    ? snippet.timestamp
+    : (Number.isFinite(snippet.createdAt) ? snippet.createdAt : Date.now());
+
+  return {
+    ...snippet,
+    id,
+    timestamp,
+    createdAt: Number.isFinite(snippet.createdAt) ? snippet.createdAt : timestamp
+  };
+}
+
+function buildV2StorageFromItems(items) {
+  const storage = createEmptyStorageV2();
+  if (!Array.isArray(items)) return storage;
+
+  const seenIds = new Set();
+
+  items.forEach((rawSnippet) => {
+    const snippet = normalizeSnippetForStorage(rawSnippet);
+    if (!snippet || seenIds.has(snippet.id)) return;
+    seenIds.add(snippet.id);
+
+    storage.snippetsById[snippet.id] = snippet;
+    storage.index.byTime.push(snippet.id);
+
+    const conversationId = snippet.conversationId || null;
+    if (!storage.index.byThread[conversationId]) {
+      storage.index.byThread[conversationId] = [];
+    }
+    storage.index.byThread[conversationId].push(snippet.id);
+
+    const projectId = snippet.projectId || null;
+    if (projectId !== null) {
+      if (!storage.index.byProject[projectId]) {
+        storage.index.byProject[projectId] = [];
+      }
+      storage.index.byProject[projectId].push(snippet.id);
+    }
+  });
+
+  storage.meta.totalCount = Object.keys(storage.snippetsById).length;
+  return storage;
+}
+
+function getItemsFromV2Storage(storage) {
+  if (!storage || typeof storage !== 'object') return [];
+  const snippetsById = storage.snippetsById || {};
+  const byTime = Array.isArray(storage.index?.byTime) ? storage.index.byTime : [];
+  const items = [];
+  const seenIds = new Set();
+
+  byTime.forEach((id) => {
+    const snippet = normalizeSnippetForStorage(snippetsById[id]);
+    if (!snippet || seenIds.has(snippet.id)) return;
+    seenIds.add(snippet.id);
+    items.push(snippet);
+  });
+
+  Object.keys(snippetsById).forEach((id) => {
+    if (seenIds.has(id)) return;
+    const snippet = normalizeSnippetForStorage(snippetsById[id]);
+    if (!snippet || seenIds.has(snippet.id)) return;
+    seenIds.add(snippet.id);
+    items.push(snippet);
+  });
+
+  return items;
+}
+
+function isV2Storage(data) {
+  return Boolean(
+    data &&
+    typeof data === 'object' &&
+    (data.schemaVersion === STORAGE_SCHEMA_VERSION || data.schemaVersion === undefined) &&
+    data.snippetsById &&
+    typeof data.snippetsById === 'object' &&
+    data.index &&
+    typeof data.index === 'object'
+  );
+}
 
 async function loadSnippets() {
   try {
     const result = await chrome.storage.local.get(STORAGE_KEY);
     const data = result[STORAGE_KEY];
-    if (!data || !Array.isArray(data.items)) {
+    if (!data) {
       return [];
     }
-    if (data.schemaVersion !== SCHEMA_VERSION) {
+
+    if (isV2Storage(data)) {
+      return getItemsFromV2Storage(data);
+    }
+
+    if (Array.isArray(data.items)) {
+      const migrated = buildV2StorageFromItems(data.items);
+      try {
+        await chrome.storage.local.set({ [STORAGE_KEY]: migrated });
+      } catch (migrationError) {
+        console.error('Failed to persist migrated storage:', migrationError);
+      }
+      return getItemsFromV2Storage(migrated);
+    }
+
+    if (Array.isArray(data)) {
+      const migrated = buildV2StorageFromItems(data);
+      try {
+        await chrome.storage.local.set({ [STORAGE_KEY]: migrated });
+      } catch (migrationError) {
+        console.error('Failed to persist migrated storage:', migrationError);
+      }
+      return getItemsFromV2Storage(migrated);
+    }
+
+    if (data.schemaVersion === STORAGE_SCHEMA_VERSION) {
+      return getItemsFromV2Storage(data);
+    }
+
+    if (data.schemaVersion === 1) {
+      const migrated = buildV2StorageFromItems([]);
+      try {
+        await chrome.storage.local.set({ [STORAGE_KEY]: migrated });
+      } catch (migrationError) {
+        console.error('Failed to persist migrated storage:', migrationError);
+      }
       return [];
     }
-    return data.items;
+
+    console.warn(`Unknown schema version: ${data.schemaVersion}`);
+    return [];
   } catch (error) {
     console.error('Failed to load snippets:', error);
     return [];
@@ -86,11 +229,8 @@ async function loadSnippets() {
 
 async function saveSnippets(snippets) {
   try {
-    const data = {
-      schemaVersion: SCHEMA_VERSION,
-      items: snippets
-    };
-    await chrome.storage.local.set({ [STORAGE_KEY]: data });
+    const storage = buildV2StorageFromItems(snippets);
+    await chrome.storage.local.set({ [STORAGE_KEY]: storage });
   } catch (error) {
     console.error('Failed to save snippets:', error);
     throw error;
@@ -3597,7 +3737,7 @@ function handleExportJson() {
     return;
   }
   const payload = {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: EXPORT_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
     items: state.items
   };
