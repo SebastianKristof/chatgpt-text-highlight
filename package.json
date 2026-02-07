@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-text-highlight",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Chrome/Edge extension for collecting text snippets from ChatGPT conversations",
   "type": "module",
   "scripts": {

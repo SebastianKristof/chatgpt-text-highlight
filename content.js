@@ -4215,7 +4215,7 @@ function handleClose() {
   updateUI();
 }
 
-if (typeof globalThis !== 'undefined') {
+if (typeof globalThis !== 'undefined' && globalThis.__CE_ENABLE_TEST_API__) {
   globalThis.__CE_ACTIVE_TEST_API__ = {
     hashText,
     buildAnchor,

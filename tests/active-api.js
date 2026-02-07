@@ -1,4 +1,5 @@
 globalThis.__CE_DISABLE_AUTO_INIT__ = true;
+globalThis.__CE_ENABLE_TEST_API__ = true;
 
 if (!globalThis.__CE_ACTIVE_TEST_API__) {
   await import('../content.js');
