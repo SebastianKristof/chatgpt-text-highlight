@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getConversationIdFromUrl, getProjectIdFromUrl, isProjectPage } from '../src/shared/urlIds.js';
+import { getConversationIdFromUrl, getProjectIdFromUrl, isProjectPage } from '../archive/src-modular-draft/shared/urlIds.js';
 
 describe('getConversationIdFromUrl', () => {
   it('extracts conversation ID from /c/{id} pattern', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hashText } from '../src/shared/hash.js';
+import { hashText } from '../archive/src-modular-draft/shared/hash.js';
 
 describe('hashText', () => {
   it('returns empty string for falsy input', () => {

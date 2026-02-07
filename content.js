@@ -132,7 +132,18 @@ function buildV2StorageFromItems(items) {
     }
   });
 
-  storage.meta.totalCount = Object.keys(storage.snippetsById).length;
+  storage.index.byTime.sort((id1, id2) => {
+    const snippet1 = storage.snippetsById[id1];
+    const snippet2 = storage.snippetsById[id2];
+    const time1 = snippet1?.createdAt || snippet1?.timestamp || 0;
+    const time2 = snippet2?.createdAt || snippet2?.timestamp || 0;
+    return time2 - time1;
+  });
+
+  storage.meta = {
+    lastUpdatedAt: Date.now(),
+    totalCount: Object.keys(storage.snippetsById).length
+  };
   return storage;
 }
 
@@ -173,6 +184,57 @@ function isV2Storage(data) {
   );
 }
 
+function normalizeStorageForSave(storage) {
+  const normalized = storage && typeof storage === 'object'
+    ? storage
+    : createEmptyStorageV2();
+
+  return {
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    snippetsById: normalized.snippetsById && typeof normalized.snippetsById === 'object'
+      ? normalized.snippetsById
+      : {},
+    index: {
+      byThread: normalized.index?.byThread && typeof normalized.index.byThread === 'object'
+        ? normalized.index.byThread
+        : {},
+      byProject: normalized.index?.byProject && typeof normalized.index.byProject === 'object'
+        ? normalized.index.byProject
+        : {},
+      byTime: Array.isArray(normalized.index?.byTime)
+        ? normalized.index.byTime
+        : []
+    },
+    meta: {
+      ...(normalized.meta || {}),
+      lastUpdatedAt: Date.now(),
+      totalCount: Object.keys(normalized.snippetsById || {}).length
+    }
+  };
+}
+
+async function saveStorageData(storage) {
+  const normalized = normalizeStorageForSave(storage);
+  try {
+    await chrome.storage.local.set({ [STORAGE_KEY]: normalized });
+    if (chrome.runtime?.lastError) {
+      const runtimeError = chrome.runtime.lastError;
+      const message = runtimeError.message || 'Failed to save snippets';
+      if (/quota|QUOTA_BYTES|exceeded/i.test(message)) {
+        throw new Error('Storage quota exceeded. Please clear some snippets or export your data.');
+      }
+      throw new Error(message);
+    }
+    return normalized;
+  } catch (error) {
+    const message = error?.message || '';
+    if (/quota|QUOTA_BYTES|exceeded/i.test(message)) {
+      throw new Error('Storage quota exceeded. Please clear some snippets or export your data.');
+    }
+    throw error;
+  }
+}
+
 async function loadSnippets() {
   try {
     const result = await chrome.storage.local.get(STORAGE_KEY);
@@ -188,7 +250,7 @@ async function loadSnippets() {
     if (Array.isArray(data.items)) {
       const migrated = buildV2StorageFromItems(data.items);
       try {
-        await chrome.storage.local.set({ [STORAGE_KEY]: migrated });
+        await saveStorageData(migrated);
       } catch (migrationError) {
         console.error('Failed to persist migrated storage:', migrationError);
       }
@@ -198,7 +260,7 @@ async function loadSnippets() {
     if (Array.isArray(data)) {
       const migrated = buildV2StorageFromItems(data);
       try {
-        await chrome.storage.local.set({ [STORAGE_KEY]: migrated });
+        await saveStorageData(migrated);
       } catch (migrationError) {
         console.error('Failed to persist migrated storage:', migrationError);
       }
@@ -212,7 +274,7 @@ async function loadSnippets() {
     if (data.schemaVersion === 1) {
       const migrated = buildV2StorageFromItems([]);
       try {
-        await chrome.storage.local.set({ [STORAGE_KEY]: migrated });
+        await saveStorageData(migrated);
       } catch (migrationError) {
         console.error('Failed to persist migrated storage:', migrationError);
       }
@@ -227,14 +289,143 @@ async function loadSnippets() {
   }
 }
 
-async function saveSnippets(snippets) {
-  try {
-    const storage = buildV2StorageFromItems(snippets);
-    await chrome.storage.local.set({ [STORAGE_KEY]: storage });
-  } catch (error) {
-    console.error('Failed to save snippets:', error);
-    throw error;
+function upsertSnippetInStorage(storage, rawSnippet) {
+  const snippet = normalizeSnippetForStorage(rawSnippet);
+  if (!snippet) {
+    return storage;
   }
+
+  const snippetsById = { ...storage.snippetsById };
+  const index = {
+    byThread: { ...storage.index.byThread },
+    byProject: { ...storage.index.byProject },
+    byTime: [...storage.index.byTime]
+  };
+
+  const existingSnippet = snippetsById[snippet.id];
+  const oldConversationId = existingSnippet?.conversationId || null;
+  const newConversationId = snippet.conversationId || null;
+  const oldProjectId = existingSnippet?.projectId || null;
+  const newProjectId = snippet.projectId || null;
+
+  snippetsById[snippet.id] = { ...snippet };
+
+  if (oldConversationId !== null && index.byThread[oldConversationId]) {
+    index.byThread[oldConversationId] = index.byThread[oldConversationId].filter((id) => id !== snippet.id);
+    if (index.byThread[oldConversationId].length === 0) {
+      delete index.byThread[oldConversationId];
+    }
+  }
+  if (!index.byThread[newConversationId]) {
+    index.byThread[newConversationId] = [];
+  }
+  if (!index.byThread[newConversationId].includes(snippet.id)) {
+    index.byThread[newConversationId].push(snippet.id);
+  }
+
+  if (oldProjectId !== null && index.byProject[oldProjectId]) {
+    index.byProject[oldProjectId] = index.byProject[oldProjectId].filter((id) => id !== snippet.id);
+    if (index.byProject[oldProjectId].length === 0) {
+      delete index.byProject[oldProjectId];
+    }
+  }
+  if (newProjectId !== null) {
+    if (!index.byProject[newProjectId]) {
+      index.byProject[newProjectId] = [];
+    }
+    if (!index.byProject[newProjectId].includes(snippet.id)) {
+      index.byProject[newProjectId].push(snippet.id);
+    }
+  }
+
+  index.byTime = index.byTime.filter((id) => id !== snippet.id);
+  const createdAt = snippet.createdAt || snippet.timestamp || 0;
+  let insertIndex = 0;
+  for (let i = 0; i < index.byTime.length; i += 1) {
+    const other = snippetsById[index.byTime[i]];
+    const otherTime = other?.createdAt || other?.timestamp || 0;
+    if (createdAt < otherTime) {
+      insertIndex = i + 1;
+    } else {
+      break;
+    }
+  }
+  index.byTime.splice(insertIndex, 0, snippet.id);
+
+  return normalizeStorageForSave({
+    ...storage,
+    snippetsById,
+    index
+  });
+}
+
+function removeSnippetFromStorage(storage, id) {
+  const snippet = storage.snippetsById[id];
+  if (!snippet) {
+    return storage;
+  }
+
+  const snippetsById = { ...storage.snippetsById };
+  delete snippetsById[id];
+
+  const index = {
+    byThread: { ...storage.index.byThread },
+    byProject: { ...storage.index.byProject },
+    byTime: storage.index.byTime.filter((snippetId) => snippetId !== id)
+  };
+
+  const conversationId = snippet.conversationId || null;
+  if (index.byThread[conversationId]) {
+    index.byThread[conversationId] = index.byThread[conversationId].filter((snippetId) => snippetId !== id);
+    if (index.byThread[conversationId].length === 0) {
+      delete index.byThread[conversationId];
+    }
+  }
+
+  const projectId = snippet.projectId || null;
+  if (projectId !== null && index.byProject[projectId]) {
+    index.byProject[projectId] = index.byProject[projectId].filter((snippetId) => snippetId !== id);
+    if (index.byProject[projectId].length === 0) {
+      delete index.byProject[projectId];
+    }
+  }
+
+  return normalizeStorageForSave({
+    ...storage,
+    snippetsById,
+    index
+  });
+}
+
+function clearThreadFromStorage(storage, conversationId) {
+  const threadIds = storage.index.byThread[conversationId] || [];
+  if (threadIds.length === 0) {
+    return storage;
+  }
+  let nextStorage = storage;
+  threadIds.forEach((id) => {
+    nextStorage = removeSnippetFromStorage(nextStorage, id);
+  });
+  return nextStorage;
+}
+
+function clearAllFromStorage() {
+  return createEmptyStorageV2();
+}
+
+function getSnippetsForConversationFromStorage(storage, conversationId) {
+  const ids = storage.index.byThread[conversationId] || [];
+  return ids
+    .map((id) => normalizeSnippetForStorage(storage.snippetsById[id]))
+    .filter(Boolean);
+}
+
+function getSnippetsForProjectFromStorage(storage, projectId) {
+  if (!projectId) return [];
+  const ids = storage.index.byProject[projectId] || [];
+  return ids
+    .map((id) => normalizeSnippetForStorage(storage.snippetsById[id]))
+    .filter(Boolean);
 }
 
 // ============================================================================
@@ -2556,6 +2747,7 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
 // ============================================================================
 
 let state = {
+  storage: createEmptyStorageV2(),
   items: [], // All snippets across all conversations
   panelOpen: false,
   selectedIds: new Set(),
@@ -2686,6 +2878,35 @@ function mergeSnippets(existing, incoming) {
     }
   });
   return { items: merged, added, skipped };
+}
+
+function syncItemsFromStorage() {
+  state.items = getItemsFromV2Storage(state.storage);
+}
+
+function replaceAllSnippets(items) {
+  state.storage = buildV2StorageFromItems(items);
+  syncItemsFromStorage();
+}
+
+function upsertStateSnippet(snippet) {
+  state.storage = upsertSnippetInStorage(state.storage, snippet);
+  syncItemsFromStorage();
+}
+
+function removeStateSnippet(id) {
+  state.storage = removeSnippetFromStorage(state.storage, id);
+  syncItemsFromStorage();
+}
+
+function clearStateThread(conversationId) {
+  state.storage = clearThreadFromStorage(state.storage, conversationId);
+  syncItemsFromStorage();
+}
+
+function clearStateAll() {
+  state.storage = clearAllFromStorage();
+  syncItemsFromStorage();
 }
 
 function buildMarkdownFromSnippets(snippets) {
@@ -2839,8 +3060,8 @@ function copySnippetsToConversation({ fromConversationId, toConversationId }) {
   if (!fromConversationId || !toConversationId || fromConversationId === toConversationId) {
     return 0;
   }
-  const fromSnippets = state.items.filter(s => s.conversationId === fromConversationId);
-  const toSnippets = state.items.filter(s => s.conversationId === toConversationId);
+  const fromSnippets = getSnippetsForConversationFromStorage(state.storage, fromConversationId);
+  const toSnippets = getSnippetsForConversationFromStorage(state.storage, toConversationId);
   if (fromSnippets.length === 0 || toSnippets.length > 0) {
     return 0;
   }
@@ -2853,7 +3074,10 @@ function copySnippetsToConversation({ fromConversationId, toConversationId }) {
     transferredFromConversationId: fromConversationId,
     anchor: s.anchor ? { ...s.anchor } : s.anchor
   }));
-  state.items = [...state.items, ...copied];
+  copied.forEach((snippet) => {
+    state.storage = upsertSnippetInStorage(state.storage, snippet);
+  });
+  syncItemsFromStorage();
   persistState();
   updateUI();
   return copied.length;
@@ -2912,7 +3136,7 @@ function scheduleBranchedFromTransferCheck() {
     state.lastAutoTransferKey = key;
     
     // Check if there are snippets to copy
-    const fromSnippets = state.items.filter(s => s.conversationId === fromId);
+    const fromSnippets = getSnippetsForConversationFromStorage(state.storage, fromId);
     if (fromSnippets.length === 0) {
       clearInterval(interval);
       return;
@@ -3062,14 +3286,14 @@ function getSnippetsByScope(scope, searchQuery = '', sortOrder = 'desc') {
     if (!currentProjectId) {
       return getSnippetsByScope('thread', searchQuery, sortOrder);
     }
-    snippets = state.items.filter(snippet => snippet.projectId === currentProjectId);
+    snippets = getSnippetsForProjectFromStorage(state.storage, currentProjectId);
   } else if (scope === 'all') {
-    snippets = state.items.slice();
+    snippets = getItemsFromV2Storage(state.storage);
   } else {
     if (isMainPage) {
-      snippets = pendingBranch ? [] : state.items.slice();
+      snippets = pendingBranch ? [] : getItemsFromV2Storage(state.storage);
     } else if (currentConvId) {
-      snippets = state.items.filter(snippet => snippet.conversationId === currentConvId);
+      snippets = getSnippetsForConversationFromStorage(state.storage, currentConvId);
     } else {
       snippets = [];
     }
@@ -3137,8 +3361,8 @@ function watchConversationChanges() {
     if (state.lastTransferPromptKey === promptKey) return;
     state.lastTransferPromptKey = promptKey;
     
-    const fromSnippets = state.items.filter(s => s.conversationId === fromConvId);
-    const toSnippets = state.items.filter(s => s.conversationId === toConvId);
+    const fromSnippets = getSnippetsForConversationFromStorage(state.storage, fromConvId);
+    const toSnippets = getSnippetsForConversationFromStorage(state.storage, toConvId);
     
     // Only offer when the destination conversation has no snippets yet.
     if (fromSnippets.length === 0 || toSnippets.length > 0) return;
@@ -3153,7 +3377,7 @@ function watchConversationChanges() {
     if (isExplicitBranch) {
       state.pendingExplicitBranch = null;
       // Check if there are snippets to copy
-      const fromSnippets = state.items.filter(s => s.conversationId === fromConvId);
+      const fromSnippets = getSnippetsForConversationFromStorage(state.storage, fromConvId);
       if (fromSnippets.length > 0) {
         // Show confirmation prompt
         showBranchCopyPrompt(fromConvId, toConvId, fromSnippets.length).then((shouldCopy) => {
@@ -3295,7 +3519,7 @@ function watchConversationChanges() {
 async function loadState() {
   try {
     const items = await loadSnippets();
-    state.items = items;
+    replaceAllSnippets(items);
     
     // Load settings
     const settingsResult = await chrome.storage.local.get('settings');
@@ -3310,12 +3534,13 @@ async function loadState() {
 
 async function persistState() {
   try {
-    await saveSnippets(state.items);
+    await saveStorageData(state.storage);
     // Save settings separately
     await chrome.storage.local.set({ settings: state.settings });
   } catch (error) {
     console.error('Failed to save state:', error);
-    createToast('Failed to save snippets');
+    const message = error?.message || 'Failed to save snippets';
+    createToast(message);
   }
 }
 
@@ -3500,7 +3725,7 @@ function handleSelection(e) {
 }
 
 function addSnippet(snippet) {
-  state.items.push(snippet);
+  upsertStateSnippet(snippet);
   updateUI();
   persistState();
 }
@@ -3523,7 +3748,7 @@ async function handleRemove(id) {
     danger: true
   });
   if (!ok) return;
-  state.items = state.items.filter(item => item.id !== id);
+  removeStateSnippet(id);
   state.selectedIds.delete(id); // Remove from selection if it was selected
   updateUI();
   persistState();
@@ -3546,10 +3771,10 @@ async function handleClear() {
   
   if (currentConvId) {
     // Remove only snippets from current conversation
-    state.items = state.items.filter(snippet => snippet.conversationId !== currentConvId);
+    clearStateThread(currentConvId);
   } else {
     // No conversation ID, clear all
-    state.items = [];
+    clearStateAll();
   }
   // Remove cleared snippets from selection
   currentSnippets.forEach(snippet => state.selectedIds.delete(snippet.id));
@@ -3574,7 +3799,11 @@ async function handleClearSelected() {
   if (!ok) return;
   
   // Remove selected snippets
-  state.items = state.items.filter(snippet => !state.selectedIds.has(snippet.id));
+  const selectedIds = Array.from(state.selectedIds);
+  selectedIds.forEach((id) => {
+    state.storage = removeSnippetFromStorage(state.storage, id);
+  });
+  syncItemsFromStorage();
   state.selectedIds.clear();
   updateUI();
   persistState();
@@ -3804,7 +4033,7 @@ async function handleConfirmImport(pending, mode, setStatus, setPreview, setPend
       return;
     }
     if (mode === 'replace') {
-      state.items = pending.items;
+      replaceAllSnippets(pending.items);
       state.selectedIds.clear();
       state.searchQuery = '';
       state.searchScope = 'thread';
@@ -3816,7 +4045,7 @@ async function handleConfirmImport(pending, mode, setStatus, setPreview, setPend
       return;
     }
     const { items: merged, added, skipped } = mergeSnippets(state.items, pending.items);
-    state.items = merged;
+    replaceAllSnippets(merged);
     updateUI();
     await persistState();
     const suffix = skipped ? ` (${skipped} duplicates skipped)` : '';

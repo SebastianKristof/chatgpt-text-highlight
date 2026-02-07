@@ -7,11 +7,11 @@ import {
   isSelectionInExtensionUI,
   getSelectionText,
   buildSnippetFromSelection
-} from '../src/content/selection.js';
-import { getConversationIdFromUrl, getProjectIdFromUrl } from '../src/shared/urlIds.js';
+} from '../archive/src-modular-draft/content/selection.js';
+import { getConversationIdFromUrl, getProjectIdFromUrl } from '../archive/src-modular-draft/shared/urlIds.js';
 
 // Mock URL functions
-vi.mock('../src/shared/urlIds.js', () => ({
+vi.mock('../archive/src-modular-draft/shared/urlIds.js', () => ({
   getConversationIdFromUrl: vi.fn(),
   getProjectIdFromUrl: vi.fn()
 }));

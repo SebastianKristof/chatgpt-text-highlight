@@ -20,7 +20,7 @@ A Chrome/Edge extension (Manifest V3) that lets you collect text snippets from C
 
 ## Development
 
-The extension uses ES6 modules. Chrome/Edge Manifest V3 supports ES modules in content scripts, so the extension should work directly without a bundler.
+Active runtime source of truth is root `content.js` (monolith). The modular `src/` experiment is archived in `archive/src-modular-draft/` for reference.
 
 ### Building for Production
 
@@ -44,19 +44,11 @@ Icons are included in the `icons/` directory. They feature a simple design with 
 ### Project Structure
 
 ```
-├── manifest.json          # Extension manifest
-├── content.css            # UI styles
-├── src/
-│   ├── content/
-│   │   ├── content.js     # Main entry point
-│   │   ├── selection.js   # Selection extraction
-│   │   ├── navigation.js  # Source navigation
-│   │   ├── storage.js     # Storage adapter
-│   │   └── ui.js          # UI components
-│   └── shared/
-│       ├── hash.js        # Text hashing
-│       └── anchor.js      # Anchor utilities
-└── tests/                 # Unit tests (to be added)
+├── manifest.json                   # Extension manifest
+├── content.js                      # Active content script source (monolith)
+├── content.css                     # UI styles
+├── archive/src-modular-draft/      # Archived modular prototype
+└── tests/                          # Unit tests
 ```
 
 ## Usage

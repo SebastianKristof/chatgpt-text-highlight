@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { findMessageById, findMessageByTextHash, findMessageByPrefix, navigateToSource } from '../src/content/navigation.js';
-import { hashText } from '../src/shared/hash.js';
+import { findMessageById, findMessageByTextHash, findMessageByPrefix, navigateToSource } from '../archive/src-modular-draft/content/navigation.js';
+import { hashText } from '../archive/src-modular-draft/shared/hash.js';
 
 // Setup DOM environment
 beforeEach(() => {
