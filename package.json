@@ -13,6 +13,11 @@
     "test:all": "npm run test && npm run test:e2e",
     "lint": "eslint . --ext .js",
     "lint:fix": "eslint . --ext .js --fix",
+    "release:zip": "node scripts/release.js zip",
+    "release:patch": "node scripts/release.js patch",
+    "release:minor": "node scripts/release.js minor",
+    "release:major": "node scripts/release.js major",
+    "release:set": "node scripts/release.js set",
     "prepare": "husky"
   },
   "keywords": [

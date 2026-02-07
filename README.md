@@ -37,6 +37,36 @@ This will:
 
 The `dist/` folder contains the production-ready extension that you can load into Chrome/Edge or package for the Chrome Web Store.
 
+### Release Artifacts
+
+Use automated release commands to keep versions in sync and generate versioned zip files:
+
+```bash
+# Keep current version, run tests/build, create zip
+npm run release:zip
+
+# Bump, release, commit, and tag
+npm run release:patch
+npm run release:minor
+npm run release:major
+
+# Set an explicit version
+npm run release:set -- 1.2.3
+```
+
+Each release command:
+- Ensures `package.json` and `manifest.json` versions stay aligned
+- Updates `package-lock.json` version metadata
+- Runs `npm test`
+- Runs `npm run build`
+- Creates `release/gpt-snippets-vX.Y.Z.zip`
+- Updates `dist.zip` as the latest artifact
+
+For `release:patch`, `release:minor`, `release:major`, and `release:set`, the script also:
+- Requires a clean git working tree before release
+- Creates commit `chore(release): vX.Y.Z`
+- Creates annotated git tag `vX.Y.Z`
+
 ### Icons
 
 Icons are included in the `icons/` directory. They feature a simple design with a green highlight bar matching the extension's color scheme.
