@@ -27,37 +27,45 @@ jobs:
       - name: Run tests
         run: npm test
   
-  # E2E tests disabled for now
-  # test-e2e:
-  #   name: Run E2E Tests
-  #   runs-on: ubuntu-latest
-  #   
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #     
-  #     - name: Setup Node.js
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version: '20'
-  #         cache: 'npm'
-  #     
-  #     - name: Install dependencies
-  #       run: npm ci
-  #     
-  #     - name: Install Playwright browsers
-  #       run: npx playwright install --with-deps chromium
-  #     
-  #     - name: Run E2E tests
-  #       run: npm run test:e2e
-  #     
-  #     - name: Upload test results
-  #       if: always()
-  #       uses: actions/upload-artifact@v3
-  #       with:
-  #         name: playwright-report
-  #         path: playwright-report/
-  #         retention-days: 30
+  test-e2e:
+    name: Run E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      
+      - name: Run E2E tests (headed via Xvfb)
+        run: xvfb-run -a npm run test:e2e
+      
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+      
+      - name: Upload Playwright raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 30
   
   lint:
     name: Lint Code
