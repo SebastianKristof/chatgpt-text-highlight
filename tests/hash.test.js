@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hashText } from '../archive/src-modular-draft/shared/hash.js';
+import { hashText } from './active-api.js';
 
 describe('hashText', () => {
   it('returns empty string for falsy input', () => {
@@ -51,4 +51,3 @@ describe('hashText', () => {
     expect(hash.length).toBeGreaterThan(0);
   });
 });
-

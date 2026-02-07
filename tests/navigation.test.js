@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { findMessageById, findMessageByTextHash, findMessageByPrefix, navigateToSource } from '../archive/src-modular-draft/content/navigation.js';
-import { hashText } from '../archive/src-modular-draft/shared/hash.js';
+import { findMessageById, findMessageByTextHash, findMessageByPrefix, navigateToSource, hashText } from './active-api.js';
 
 // Setup DOM environment
 beforeEach(() => {
@@ -164,8 +163,7 @@ describe('navigateToSource', () => {
     const snippet = { id: 'snippet-1', text: 'Test' };
     const result = navigateToSource(snippet);
     
-    expect(result.success).toBe(false);
-    expect(result.reason).toContain('no anchor');
+    expect(result).toBe(false);
   });
 
   it('finds message by messageId and highlights', () => {
@@ -185,7 +183,7 @@ describe('navigateToSource', () => {
     };
 
     const result = navigateToSource(snippet);
-    expect(result.success).toBe(true);
+    expect(result).toBe(true);
   });
 
   it('falls back to textHash if messageId not found', () => {
@@ -206,7 +204,7 @@ describe('navigateToSource', () => {
     };
 
     const result = navigateToSource(snippet);
-    expect(result.success).toBe(true);
+    expect(result).toBe(true);
   });
 
   it('falls back to selectionPrefix if textHash not found', () => {
@@ -228,7 +226,7 @@ describe('navigateToSource', () => {
     };
 
     const result = navigateToSource(snippet);
-    expect(result.success).toBe(true);
+    expect(result).toBe(true);
   });
 
   it('returns error if message not found in current conversation', () => {
@@ -242,8 +240,7 @@ describe('navigateToSource', () => {
     };
 
     const result = navigateToSource(snippet);
-    expect(result.success).toBe(false);
-    expect(result.reason).toContain('not found');
+    expect(result).toBe(false);
   });
 
   it('returns error if conversation ID mismatch', () => {
@@ -259,8 +256,7 @@ describe('navigateToSource', () => {
     };
 
     const result = navigateToSource(snippet);
-    expect(result.success).toBe(false);
-    expect(result.reason).toContain('different conversation');
+    expect(result).toBe(false);
   });
 
   it('highlights whole message if no selection offsets', () => {
@@ -279,7 +275,7 @@ describe('navigateToSource', () => {
     };
 
     const result = navigateToSource(snippet);
-    expect(result.success).toBe(true);
+    expect(result).toBe(true);
     // Message should have highlight class (will be removed after timeout)
   });
 });

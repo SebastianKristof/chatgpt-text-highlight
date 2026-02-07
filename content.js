@@ -235,16 +235,16 @@ async function saveStorageData(storage) {
   }
 }
 
-async function loadSnippets() {
+async function loadStorage() {
   try {
     const result = await chrome.storage.local.get(STORAGE_KEY);
     const data = result[STORAGE_KEY];
     if (!data) {
-      return [];
+      return createEmptyStorageV2();
     }
 
     if (isV2Storage(data)) {
-      return getItemsFromV2Storage(data);
+      return normalizeStorageForSave(data);
     }
 
     if (Array.isArray(data.items)) {
@@ -254,7 +254,7 @@ async function loadSnippets() {
       } catch (migrationError) {
         console.error('Failed to persist migrated storage:', migrationError);
       }
-      return getItemsFromV2Storage(migrated);
+      return migrated;
     }
 
     if (Array.isArray(data)) {
@@ -264,11 +264,11 @@ async function loadSnippets() {
       } catch (migrationError) {
         console.error('Failed to persist migrated storage:', migrationError);
       }
-      return getItemsFromV2Storage(migrated);
+      return migrated;
     }
 
     if (data.schemaVersion === STORAGE_SCHEMA_VERSION) {
-      return getItemsFromV2Storage(data);
+      return normalizeStorageForSave(data);
     }
 
     if (data.schemaVersion === 1) {
@@ -278,15 +278,43 @@ async function loadSnippets() {
       } catch (migrationError) {
         console.error('Failed to persist migrated storage:', migrationError);
       }
-      return [];
+      return migrated;
     }
 
     console.warn(`Unknown schema version: ${data.schemaVersion}`);
-    return [];
+    return createEmptyStorageV2();
   } catch (error) {
     console.error('Failed to load snippets:', error);
-    return [];
+    return createEmptyStorageV2();
   }
+}
+
+async function loadSnippets() {
+  const storage = await loadStorage();
+  return getItemsFromV2Storage(storage);
+}
+
+async function saveStorage(storage) {
+  return saveStorageData(storage);
+}
+
+function upsertSnippet(storage, snippet) {
+  if (!snippet || !snippet.id) {
+    throw new Error('Snippet must have an id');
+  }
+  return upsertSnippetInStorage(storage, snippet);
+}
+
+function removeSnippet(storage, id) {
+  return removeSnippetFromStorage(storage, id);
+}
+
+function clearThread(storage, conversationId) {
+  return clearThreadFromStorage(storage, conversationId);
+}
+
+function clearAll(_storage) {
+  return clearAllFromStorage();
 }
 
 function upsertSnippetInStorage(storage, rawSnippet) {
@@ -308,6 +336,18 @@ function upsertSnippetInStorage(storage, rawSnippet) {
   const oldProjectId = existingSnippet?.projectId || null;
   const newProjectId = snippet.projectId || null;
 
+  const hasExplicitTime = Number.isFinite(rawSnippet?.createdAt) || Number.isFinite(rawSnippet?.timestamp);
+  if (existingSnippet && !hasExplicitTime) {
+    const preservedCreatedAt = existingSnippet.createdAt ?? existingSnippet.timestamp;
+    const preservedTimestamp = existingSnippet.timestamp ?? existingSnippet.createdAt;
+    if (Number.isFinite(preservedCreatedAt)) {
+      snippet.createdAt = preservedCreatedAt;
+    }
+    if (Number.isFinite(preservedTimestamp)) {
+      snippet.timestamp = preservedTimestamp;
+    }
+  }
+
   snippetsById[snippet.id] = { ...snippet };
 
   if (oldConversationId !== null && index.byThread[oldConversationId]) {
@@ -316,11 +356,13 @@ function upsertSnippetInStorage(storage, rawSnippet) {
       delete index.byThread[oldConversationId];
     }
   }
-  if (!index.byThread[newConversationId]) {
-    index.byThread[newConversationId] = [];
-  }
-  if (!index.byThread[newConversationId].includes(snippet.id)) {
-    index.byThread[newConversationId].push(snippet.id);
+  if (newConversationId !== null) {
+    if (!index.byThread[newConversationId]) {
+      index.byThread[newConversationId] = [];
+    }
+    if (!index.byThread[newConversationId].includes(snippet.id)) {
+      index.byThread[newConversationId].push(snippet.id);
+    }
   }
 
   if (oldProjectId !== null && index.byProject[oldProjectId]) {
@@ -468,6 +510,10 @@ function getProjectIdFromUrl(url) {
   }
   
   return null;
+}
+
+function isProjectPage(url) {
+  return getProjectIdFromUrl(url) !== null;
 }
 
 function getCurrentProjectId() {
@@ -4169,9 +4215,39 @@ function handleClose() {
   updateUI();
 }
 
+if (typeof globalThis !== 'undefined') {
+  globalThis.__CE_ACTIVE_TEST_API__ = {
+    hashText,
+    buildAnchor,
+    findSelectionOffsets,
+    getConversationIdFromUrl,
+    getProjectIdFromUrl,
+    isProjectPage,
+    getConversationId,
+    findMessageBlock,
+    getMessageId,
+    getMessageText,
+    isSelectionInExtensionUI,
+    getSelectionText,
+    buildSnippetFromSelection,
+    findMessageById,
+    findMessageByTextHash,
+    findMessageByPrefix,
+    navigateToSource,
+    loadStorage,
+    saveStorage,
+    upsertSnippet,
+    removeSnippet,
+    clearThread,
+    clearAll
+  };
+}
+
 // Initialize when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
+if (!(typeof globalThis !== 'undefined' && globalThis.__CE_DISABLE_AUTO_INIT__)) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 }

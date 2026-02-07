@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildAnchor, findSelectionOffsets } from '../archive/src-modular-draft/shared/anchor.js';
+import { buildAnchor, findSelectionOffsets } from './active-api.js';
 
 describe('buildAnchor', () => {
   it('builds an anchor with hash, prefix and offsets', () => {
@@ -121,4 +121,3 @@ describe('findSelectionOffsets', () => {
     expect(findSelectionOffsets('test', undefined)).toBeNull();
   });
 });
-

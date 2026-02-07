@@ -6,7 +6,7 @@ import {
   removeSnippet,
   clearThread,
   clearAll
-} from '../archive/src-modular-draft/content/storage.js';
+} from './active-api.js';
 
 // Helper to create empty storage (matches internal implementation)
 function createEmptyStorage() {

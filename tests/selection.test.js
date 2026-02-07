@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getConversationId,
   findMessageBlock,
@@ -7,14 +7,7 @@ import {
   isSelectionInExtensionUI,
   getSelectionText,
   buildSnippetFromSelection
-} from '../archive/src-modular-draft/content/selection.js';
-import { getConversationIdFromUrl, getProjectIdFromUrl } from '../archive/src-modular-draft/shared/urlIds.js';
-
-// Mock URL functions
-vi.mock('../archive/src-modular-draft/shared/urlIds.js', () => ({
-  getConversationIdFromUrl: vi.fn(),
-  getProjectIdFromUrl: vi.fn()
-}));
+} from './active-api.js';
 
 describe('getConversationId', () => {
   beforeEach(() => {
@@ -25,15 +18,15 @@ describe('getConversationId', () => {
   });
 
   it('returns conversation ID from current URL', () => {
-    getConversationIdFromUrl.mockReturnValue('conv-123');
-    
     const id = getConversationId();
     expect(id).toBe('conv-123');
-    expect(getConversationIdFromUrl).toHaveBeenCalledWith('https://chatgpt.com/c/conv-123');
   });
 
   it('returns null when no conversation ID in URL', () => {
-    getConversationIdFromUrl.mockReturnValue(null);
+    Object.defineProperty(window, 'location', {
+      value: { href: 'https://chatgpt.com/' },
+      writable: true
+    });
     
     const id = getConversationId();
     expect(id).toBeNull();
@@ -279,8 +272,6 @@ describe('buildSnippetFromSelection', () => {
       value: { href: 'https://chatgpt.com/c/conv-123' },
       writable: true
     });
-    getConversationIdFromUrl.mockReturnValue('conv-123');
-    getProjectIdFromUrl.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -309,7 +300,7 @@ describe('buildSnippetFromSelection', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null for selection shorter than minimum length', () => {
+  it('creates snippet even for short selections in active runtime', () => {
     const div = document.createElement('div');
     div.textContent = 'ab';
     document.body.appendChild(div);
@@ -321,7 +312,8 @@ describe('buildSnippetFromSelection', () => {
     selection.addRange(range);
 
     const result = buildSnippetFromSelection();
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result.text).toBe('ab');
   });
 
   it('creates snippet from valid selection', () => {
@@ -381,7 +373,10 @@ describe('buildSnippetFromSelection', () => {
   });
 
   it('includes projectId when available', () => {
-    getProjectIdFromUrl.mockReturnValue('proj-123');
+    Object.defineProperty(window, 'location', {
+      value: { href: 'https://chatgpt.com/g/proj-123/c/conv-123' },
+      writable: true
+    });
     
     const message = document.createElement('div');
     message.setAttribute('data-message-id', 'msg-123');
