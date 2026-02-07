@@ -13,6 +13,8 @@ This folder contains a fresh baseline E2E suite for the active extension runtime
 - `smoke-ui.test.js`: extension UI renders, FAB works, panel open/close works.
 - `collect-snippet.test.js`: text selection -> Collect -> snippet appears in panel.
 - `search-scope.test.js`: search scope toggle (`Thread` -> `All`) and cross-thread search.
+- `minimized-mode.test.js`: FAB minimize/expand behavior and persistence after reload.
+- `panel-actions.test.js`: bulk select + clear selected flow through compact action bar.
 
 ## Browser Resolution
 

@@ -190,15 +190,35 @@ export async function selectMessageText(page, messageId = 'msg-1') {
   }, messageId);
 
   await page.mouse.up();
-  const toolbar = page.locator('.ce-selection-toolbar');
+  const toolbar = page.locator('.ce-selection-toolbar:visible').last();
   await expect(toolbar).toBeVisible({ timeout: 10_000 });
-  await expect(toolbar.getByRole('button', { name: 'Collect snippet' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'Collect snippet' }).first()).toBeVisible();
 }
 
 export async function collectCurrentSelection(page) {
-  const collectBtn = page.locator('.ce-selection-toolbar .ce-toolbar-btn', { hasText: 'Collect' }).first();
+  const collectBtn = page.locator('.ce-selection-toolbar .ce-toolbar-btn', { hasText: 'Collect' }).last();
   await expect(collectBtn).toBeVisible();
-  await collectBtn.click();
+  await page.evaluate(() => {
+    const isVisible = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && !!el.getClientRects().length;
+    };
+
+    const buttons = Array.from(document.querySelectorAll('.ce-selection-toolbar .ce-toolbar-btn'))
+      .filter((el) => el.textContent?.includes('Collect') && isVisible(el));
+
+    const target = buttons[buttons.length - 1];
+    if (!target) {
+      throw new Error('Visible Collect button not found');
+    }
+    target.click();
+  });
+}
+
+export async function collectSnippetFromMessage(page, messageId = 'msg-1') {
+  await selectMessageText(page, messageId);
+  await collectCurrentSelection(page);
 }
 
 export async function openPanel(page) {
