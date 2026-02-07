@@ -1,86 +1,55 @@
-# E2E Tests
+# E2E Tests (Baseline)
 
-End-to-end tests for the ChatGPT Text Highlight extension using Playwright.
+This folder contains a fresh baseline E2E suite for the active extension runtime.
 
-## Setup
+## Goals
 
-Install dependencies:
+- Cover core user-critical behavior with stable smoke tests.
+- Keep test setup deterministic (mocked page content, no network dependence).
+- Make failures actionable instead of flaky.
 
-```bash
-npm install
-```
+## Current Coverage
 
-Install Playwright browsers:
+- `smoke-ui.test.js`: extension UI renders, FAB works, panel open/close works.
+- `collect-snippet.test.js`: text selection -> Collect -> snippet appears in panel.
+- `search-scope.test.js`: search scope toggle (`Thread` -> `All`) and cross-thread search.
 
-```bash
-npx playwright install chromium
-```
+## Browser Resolution
 
-## Running Tests
+`setup.js` resolves a Chromium executable in this order:
 
-Run all e2e tests:
+1. `E2E_BROWSER_PATH` env var (if set)
+2. Google Chrome app
+3. Brave Browser app
+4. Playwright Chromium cache
+
+This avoids brittle behavior when Playwright browser cache is stale or arch-mismatched.
+
+## Network Isolation
+
+`setup.js` intercepts `https://chatgpt.com/**` requests and fulfills them with local HTML fixtures.
+That means tests do not hit real ChatGPT and do not get blocked by Cloudflare challenges.
+
+## Running
 
 ```bash
 npm run test:e2e
 ```
 
-Run tests in UI mode (interactive):
+Single file:
 
 ```bash
-npm run test:e2e:ui
+npx playwright test tests/e2e/smoke-ui.test.js
 ```
 
-Run tests in debug mode:
+If browser launch fails, either:
 
 ```bash
-npm run test:e2e:debug
+npx playwright install chromium
 ```
 
-Run a specific test file:
+or set:
 
 ```bash
-npx playwright test tests/e2e/minimized-mode.test.js
+E2E_BROWSER_PATH="/path/to/chromium-based-browser"
 ```
-
-## Test Structure
-
-- `setup.js` - Shared utilities for setting up extension context and mocking ChatGPT pages
-- `minimized-mode.test.js` - Tests for FAB minimized mode functionality
-- `cross-conversation-navigation.test.js` - Tests for cross-conversation URL handling
-- `toast-behavior.test.js` - Tests for toast notification behavior (show once per session)
-- `branch-copy-confirmation.test.js` - Tests for branch copy confirmation modal
-
-## Test Coverage
-
-### Minimized Mode
-- ✅ FAB shows in full mode by default
-- ✅ Clicking chevron minimizes FAB
-- ✅ Clicking chevron in minimized mode expands FAB
-- ✅ Minimized state persists across page reloads
-- ✅ Panel opens when clicking FAB body (not chevron)
-- ✅ Toolbar shows minimized when FAB is minimized
-- ✅ No drag issues when clicking chevron
-
-### Cross-Conversation Navigation
-- ✅ Uses `window.location.origin` for navigation URLs
-- ✅ Works on chatgpt.com
-- ✅ Works on chat.openai.com
-- ✅ Works on enterprise domains
-
-### Toast Behavior
-- ✅ "Loaded X snippets" shows only once per session
-- ✅ SessionStorage flag is set correctly
-- ✅ New sessions show toast again
-
-### Branch Copy Confirmation
-- ✅ Shows confirmation modal when branching
-- ✅ Has "Don't ask again" checkbox
-- ✅ Copies snippets when confirmed
-- ✅ Doesn't copy when cancelled
-
-## Notes
-
-- Tests run in non-headless mode to support Chrome extension testing
-- Extension is loaded automatically via Playwright's extension loading
-- Some tests may require longer timeouts due to extension initialization
-- Tests mock ChatGPT page structure rather than using real ChatGPT (to avoid rate limits)
