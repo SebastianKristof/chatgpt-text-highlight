@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPT Snippets",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Collect, search, and reuse the best parts of ChatGPT responses",
   "permissions": [
     "storage"
@@ -15,7 +15,9 @@
       "js": [
         "content.js"
       ],
-      "css": ["content.css"],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
   ],
