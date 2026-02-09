@@ -1280,8 +1280,18 @@ function formatTimestamp(date) {
 function createFAB(count, onClick, onToggleMinimized) {
   const fab = document.createElement('button');
   const isMinimized = state.settings.minimizedMode || false;
+  let suppressFabClick = false;
   fab.className = isMinimized ? 'ce-fab ce-fab-minimized' : 'ce-fab';
   fab.setAttribute('aria-label', `Collected snippets: ${count}`);
+  const resetFabDragState = () => {
+    fabDragState.active = false;
+    fabDragState.longPressReady = false;
+    fabDragState.moved = false;
+    if (fabDragState.longPressTimer) {
+      clearTimeout(fabDragState.longPressTimer);
+      fabDragState.longPressTimer = null;
+    }
+  };
   
   // Create chevron as a span (not a button to avoid nested button issues)
   const chevronBtn = document.createElement('span');
@@ -1298,19 +1308,18 @@ function createFAB(count, onClick, onToggleMinimized) {
     chevronBtn.title = 'Minimize';
   }
   
+  // Intercept pointer down so the chevron doesn't arm FAB drag behavior.
+  chevronBtn.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    resetFabDragState();
+  });
+
   // Chevron click handler - always toggles minimize/maximize
-  // Use mousedown to intercept before the FAB's click handler
-  chevronBtn.addEventListener('mousedown', async (e) => {
+  chevronBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
-    // Reset drag state to prevent the FAB from "running away"
-    fabDragState.active = false;
-    fabDragState.longPressReady = false;
-    fabDragState.moved = false;
-    if (fabDragState.longPressTimer) {
-      clearTimeout(fabDragState.longPressTimer);
-      fabDragState.longPressTimer = null;
-    }
+    suppressFabClick = true;
+    resetFabDragState();
     if (onToggleMinimized) {
       await onToggleMinimized();
     }
@@ -1321,6 +1330,8 @@ function createFAB(count, onClick, onToggleMinimized) {
     if (e.key === 'Enter' || e.key === ' ') {
       e.stopPropagation();
       e.preventDefault();
+      suppressFabClick = true;
+      resetFabDragState();
       if (onToggleMinimized) {
         await onToggleMinimized();
       }
@@ -1352,6 +1363,11 @@ function createFAB(count, onClick, onToggleMinimized) {
   }
   
   fab.addEventListener('click', (e) => {
+    if (suppressFabClick) {
+      suppressFabClick = false;
+      e.preventDefault();
+      return;
+    }
     // Don't toggle panel if clicking chevron
     if (e.target === chevronBtn || chevronBtn.contains(e.target)) {
       e.preventDefault();
@@ -1449,6 +1465,28 @@ let virtualizationState = {
   measuredHeight: null
 };
 
+function attachVirtualListHandlers(list) {
+  if (!list || list._virtualHandlersAttached) return;
+
+  let scrollTimeout;
+  list.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      updateVirtualizedList(list);
+    }, 10);
+  });
+
+  if (window.ResizeObserver) {
+    const resizeObserver = new ResizeObserver(() => {
+      updateVirtualizedList(list);
+    });
+    resizeObserver.observe(list);
+    list._resizeObserver = resizeObserver;
+  }
+
+  list._virtualHandlersAttached = true;
+}
+
 function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, onToggleSelect, selectedIds }) {
   const list = document.createElement('div');
   list.className = 'ce-snippet-list';
@@ -1468,6 +1506,7 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
   list._onCopySnippet = onCopySnippet;
   list._onToggleSelect = onToggleSelect;
   list._selectedIds = selectedIds;
+  list._snippetSignature = snippets.map((snippet) => snippet.id).join('|');
   
   // Virtualization container
   const virtualContainer = document.createElement('div');
@@ -1477,22 +1516,7 @@ function createSnippetList({ snippets, onRemove, onSnippetClick, onCopySnippet, 
   // Initial render
   updateVirtualizedList(list);
   
-  // Throttled scroll handler
-  let scrollTimeout;
-  list.addEventListener('scroll', () => {
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-      updateVirtualizedList(list);
-    }, 10);
-  });
-  
-  // Resize observer for window resize
-  if (window.ResizeObserver) {
-    const resizeObserver = new ResizeObserver(() => {
-      updateVirtualizedList(list);
-    });
-    resizeObserver.observe(list);
-  }
+  attachVirtualListHandlers(list);
   
   return list;
 }
@@ -2611,33 +2635,20 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     }
     list.appendChild(emptyState);
   } else {
-    // Clear any empty state
-    list.innerHTML = '';
+    const nextSignature = snippets.map((snippet) => snippet.id).join('|');
+    const shouldPreserveScroll = list._snippetSignature === nextSignature;
+    const previousScrollTop = shouldPreserveScroll ? (list.scrollTop || 0) : 0;
+    list._snippetSignature = nextSignature;
     
     // Ensure virtual container exists (it might not exist if we transitioned from empty state)
     let container = list.querySelector('.ce-virtual-container');
     if (!container) {
+      list.innerHTML = '';
       container = document.createElement('div');
       container.className = 'ce-virtual-container';
       list.appendChild(container);
-      
-      // Re-attach scroll handler if it was lost
-      let scrollTimeout;
-      list.addEventListener('scroll', () => {
-        clearTimeout(scrollTimeout);
-        scrollTimeout = setTimeout(() => {
-          updateVirtualizedList(list);
-        }, 10);
-      });
-      
-      // Re-attach resize observer if it was lost
-      if (window.ResizeObserver) {
-        const resizeObserver = new ResizeObserver(() => {
-          updateVirtualizedList(list);
-        });
-        resizeObserver.observe(list);
-      }
     }
+    attachVirtualListHandlers(list);
     
     // Update virtualization data
     list._snippets = snippets;
@@ -2650,6 +2661,10 @@ function updatePanel(panel, snippets, onRemove, onSnippetClick, onCopySnippet, o
     // Update virtualized list (use requestAnimationFrame to ensure DOM is ready)
     requestAnimationFrame(() => {
       updateVirtualizedList(list);
+      if (shouldPreserveScroll) {
+        const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+        list.scrollTop = Math.min(previousScrollTop, maxScrollTop);
+      }
     });
   }
   
