@@ -5,6 +5,7 @@ import {
   getMessageId,
   getMessageText,
   isSelectionInExtensionUI,
+  isSelectionInUserEntryField,
   getSelectionText,
   buildSnippetFromSelection
 } from './active-api.js';
@@ -221,6 +222,50 @@ describe('isSelectionInExtensionUI', () => {
   });
 });
 
+describe('isSelectionInUserEntryField', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns false for empty selection', () => {
+    const selection = {
+      rangeCount: 0
+    };
+    expect(isSelectionInUserEntryField(selection)).toBe(false);
+  });
+
+  it('returns true for contenteditable selection', () => {
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', 'true');
+    editor.textContent = 'Draft prompt';
+    document.body.appendChild(editor);
+
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range
+    };
+
+    expect(isSelectionInUserEntryField(selection)).toBe(true);
+  });
+
+  it('returns false for non-editable content selection', () => {
+    const message = document.createElement('div');
+    message.textContent = 'Assistant reply';
+    document.body.appendChild(message);
+
+    const range = document.createRange();
+    range.selectNodeContents(message);
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range
+    };
+
+    expect(isSelectionInUserEntryField(selection)).toBe(false);
+  });
+});
+
 describe('getSelectionText', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -292,6 +337,22 @@ describe('buildSnippetFromSelection', () => {
 
     const range = document.createRange();
     range.selectNodeContents(container);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const result = buildSnippetFromSelection();
+    expect(result).toBeNull();
+  });
+
+  it('returns null for selection in user entry field', () => {
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', 'true');
+    editor.textContent = 'Prompt draft';
+    document.body.appendChild(editor);
+
+    const range = document.createRange();
+    range.selectNodeContents(editor);
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);

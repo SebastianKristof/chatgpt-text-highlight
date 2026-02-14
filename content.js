@@ -578,6 +578,79 @@ function isSelectionInExtensionUI(selection) {
   return false;
 }
 
+function isTextEditableInputType(type) {
+  const nonTextTypes = new Set([
+    'button',
+    'checkbox',
+    'color',
+    'file',
+    'hidden',
+    'image',
+    'radio',
+    'range',
+    'reset',
+    'submit'
+  ]);
+  return !nonTextTypes.has((type || 'text').toLowerCase());
+}
+
+function isElementInUserEntryField(element) {
+  if (!element) return false;
+  let current = element;
+  while (current && current !== document.body) {
+    if (current.nodeType !== Node.ELEMENT_NODE) {
+      current = current.parentElement;
+      continue;
+    }
+
+    const tagName = current.tagName?.toLowerCase();
+    if (tagName === 'textarea') {
+      const textarea = current;
+      if (!textarea.disabled && !textarea.readOnly) {
+        return true;
+      }
+    }
+
+    if (tagName === 'input') {
+      const input = current;
+      if (!input.disabled && !input.readOnly && isTextEditableInputType(input.type)) {
+        return true;
+      }
+    }
+
+    const contentEditableAttr = current.getAttribute?.('contenteditable');
+    if (
+      current.isContentEditable ||
+      (contentEditableAttr !== null && contentEditableAttr.toLowerCase() !== 'false')
+    ) {
+      return true;
+    }
+
+    const role = current.getAttribute?.('role');
+    const ariaReadonly = current.getAttribute?.('aria-readonly');
+    if ((role === 'textbox' || role === 'searchbox') && ariaReadonly !== 'true') {
+      return true;
+    }
+
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function isRangeInUserEntryField(range) {
+  if (!range) return false;
+  const container = range.commonAncestorContainer;
+  const element = container.nodeType === Node.ELEMENT_NODE
+    ? container
+    : container.parentElement;
+  return isElementInUserEntryField(element);
+}
+
+function isSelectionInUserEntryField(selection) {
+  if (!selection || selection.rangeCount === 0) return false;
+  return isRangeInUserEntryField(selection.getRangeAt(0));
+}
+
 function getSelectionText() {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) return '';
@@ -594,7 +667,7 @@ function buildSnippetFromSelection() {
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
     return null;
   }
-  if (isSelectionInExtensionUI(selection)) {
+  if (isSelectionInExtensionUI(selection) || isSelectionInUserEntryField(selection)) {
     return null;
   }
   
@@ -678,6 +751,7 @@ function buildSnippetFromSelection() {
 
 function buildSnippetFromRangeSnapshot({ selectionText, markdownText, range }) {
   if (!range) return null;
+  if (isRangeInUserEntryField(range)) return null;
   
   const rawSelectionText = (selectionText || '').trim();
   if (!rawSelectionText) return null;
@@ -3891,26 +3965,15 @@ function handleSelection(e) {
       hideSelectionToolbar();
       return;
     }
-    
-    // Don't show toolbar if selection is in extension UI
-    const range = selection.getRangeAt(0);
-    const containerEl = range.commonAncestorContainer;
-    const element = containerEl.nodeType === Node.ELEMENT_NODE 
-      ? containerEl 
-      : containerEl.parentElement;
-    
-    if (element) {
-      let current = element;
-      while (current && current !== document.body) {
-        if (current.id === CONTAINER_ID || current.classList?.contains('ce-extension')) {
-          hideSelectionToolbar();
-          return;
-        }
-        current = current.parentElement;
-      }
+
+    // Don't show toolbar for extension UI selections or user entry fields.
+    if (isSelectionInExtensionUI(selection) || isSelectionInUserEntryField(selection)) {
+      hideSelectionToolbar();
+      return;
     }
     
     // Show selection toolbar near FAB
+    const range = selection.getRangeAt(0);
     createSelectionToolbar(selection, range);
   }, 10);
 }
@@ -4373,6 +4436,7 @@ if (typeof globalThis !== 'undefined' && globalThis.__CE_ENABLE_TEST_API__) {
     getMessageId,
     getMessageText,
     isSelectionInExtensionUI,
+    isSelectionInUserEntryField,
     getSelectionText,
     buildSnippetFromSelection,
     findMessageById,

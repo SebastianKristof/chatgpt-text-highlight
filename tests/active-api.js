@@ -23,6 +23,7 @@ export const {
   getMessageId,
   getMessageText,
   isSelectionInExtensionUI,
+  isSelectionInUserEntryField,
   getSelectionText,
   buildSnippetFromSelection,
   findMessageById,
