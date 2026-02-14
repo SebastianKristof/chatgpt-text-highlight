@@ -2,7 +2,6 @@
 
 import { spawnSync } from 'child_process';
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -17,7 +16,6 @@ const MANIFEST_PATH = path.join(ROOT, 'manifest.json');
 const LOCK_PATH = path.join(ROOT, 'package-lock.json');
 const DIST_DIR = path.join(ROOT, 'dist');
 const RELEASE_DIR = path.join(ROOT, 'release');
-const DIST_ZIP_PATH = path.join(ROOT, 'dist.zip');
 
 function fail(message) {
   console.error(`Error: ${message}`);
@@ -140,14 +138,14 @@ function createReleaseZip(version, extensionName) {
   rmSync(artifactPath, { force: true });
 
   run('zip', ['-r', '-q', artifactPath, '.'], { cwd: DIST_DIR });
-  copyFileSync(artifactPath, DIST_ZIP_PATH);
 
   console.log(`\nRelease artifact: ${path.relative(ROOT, artifactPath)}`);
-  console.log(`Updated latest artifact: ${path.relative(ROOT, DIST_ZIP_PATH)}`);
+  return artifactPath;
 }
 
 function usage() {
-  console.log('Usage: node scripts/release.js <zip|patch|minor|major|set <x.y.z>>');
+  console.log('Usage: node scripts/release.js [zip|patch|minor|major|set <x.y.z>]');
+  console.log('If omitted, action defaults to: minor');
 }
 
 function assertGitReadyForRelease() {
@@ -169,7 +167,7 @@ function createReleaseCommitAndTag(version) {
     fail(`Tag ${tagName} already exists.`);
   }
 
-  const filesToAdd = ['package.json', 'manifest.json', 'dist.zip'];
+  const filesToAdd = ['package.json', 'manifest.json'];
   if (existsSync(LOCK_PATH)) {
     filesToAdd.push('package-lock.json');
   }
@@ -186,11 +184,17 @@ function createReleaseCommitAndTag(version) {
   console.log(`Created git commit and tag: ${tagName}`);
 }
 
+function runQualityChecks() {
+  console.log('\nRunning quality checks...');
+  run('npm', ['run', 'lint']);
+  run('npm', ['run', 'test']);
+  run('npm', ['run', 'test:e2e']);
+}
+
 function main() {
-  const action = process.argv[2];
-  if (!action) {
-    usage();
-    process.exit(1);
+  const action = process.argv[2] || 'minor';
+  if (!process.argv[2]) {
+    console.log('No release action specified; defaulting to minor.');
   }
 
   let nextVersion = null;
@@ -217,6 +221,7 @@ function main() {
   }
 
   let finalState = current;
+  let artifactPath = null;
   if (nextVersion !== null) {
     console.log(`Bumping version: ${current.packageJson.version} -> ${nextVersion}`);
     finalState = syncVersions(nextVersion);
@@ -224,11 +229,12 @@ function main() {
     console.log(`Using current version: ${current.packageJson.version}`);
   }
 
-  run('npm', ['run', 'test']);
+  runQualityChecks();
   run('npm', ['run', 'build']);
-  createReleaseZip(finalState.packageJson.version, finalState.manifest.name);
+  artifactPath = createReleaseZip(finalState.packageJson.version, finalState.manifest.name);
 
   if (shouldTag) {
+    console.log(`Release zip kept in: ${path.relative(ROOT, artifactPath)}`);
     createReleaseCommitAndTag(finalState.packageJson.version);
   }
 }

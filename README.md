@@ -45,7 +45,10 @@ Use automated release commands to keep versions in sync and generate versioned z
 # Keep current version, run tests/build, create zip
 npm run release:zip
 
-# Bump, release, commit, and tag
+# Bump MINOR by default, release, commit, and tag
+npm run release
+
+# Explicit bump type
 npm run release:patch
 npm run release:minor
 npm run release:major
@@ -57,12 +60,13 @@ npm run release:set -- 1.2.3
 Each release command:
 - Ensures `package.json` and `manifest.json` versions stay aligned
 - Updates `package-lock.json` version metadata
+- Runs `npm run lint`
 - Runs `npm test`
+- Runs `npm run test:e2e`
 - Runs `npm run build`
 - Creates `release/gpt-snippets-vX.Y.Z.zip`
-- Updates `dist.zip` as the latest artifact
 
-For `release:patch`, `release:minor`, `release:major`, and `release:set`, the script also:
+For `release`, `release:patch`, `release:minor`, `release:major`, and `release:set`, the script also:
 - Requires a clean git working tree before release
 - Creates commit `chore(release): vX.Y.Z`
 - Creates annotated git tag `vX.Y.Z`
@@ -85,7 +89,7 @@ Icons are included in the `icons/` directory. They feature a simple design with 
 
 1. Navigate to [chatgpt.com](https://chatgpt.com) or [chat.openai.com](https://chat.openai.com)
 2. Select any text in a conversation
-3. The extension automatically saves it as a snippet
+3. Use the selection toolbar's **Collect** button to save the snippet
 4. Click the "Collected (n)" button in the bottom-right to view all snippets
 5. Click a snippet to navigate to its source
 6. Use "Copy" to copy all snippets as markdown
