@@ -2817,7 +2817,7 @@ let state = {
   searchScope: 'thread',
   sortOrder: 'desc', // 'desc' for newest first, 'asc' for oldest first
   settings: {
-    theme: 'auto', // Default to auto (follows system)
+    theme: 'auto', // Default to auto (follows host page theme, fallback: system)
     minimizedMode: false // Default to full mode
   },
   // When ChatGPT navigates to a new thread, it can take a moment for the URL to include the new conversationId.
@@ -2837,6 +2837,9 @@ let fab = null;
 let panel = null;
 let importExportModal = null;
 let modalOpen = false;
+let hostThemeObserver = null;
+let hostThemeMediaQuery = null;
+let pendingAutoThemeSync = false;
 
 function snippetKey(snippet) {
   const anchor = snippet?.anchor || {};
@@ -3220,27 +3223,180 @@ function scheduleBranchedFromTransferCheck() {
  * Applies theme to the extension UI.
  * @param {string} theme - Theme mode: 'light', 'dark', or 'auto'
  */
-function applyTheme(theme) {
-  if (!container) return;
-  
-  container.classList.remove('ce-theme-light', 'ce-theme-dark');
-  
-  if (theme === 'auto') {
-    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    container.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
-  } else {
-    container.classList.add(`ce-theme-${theme}`);
+function hasDarkToken(value) {
+  return typeof value === 'string' && /\bdark\b/i.test(value);
+}
+
+function hasLightToken(value) {
+  return typeof value === 'string' && /\blight\b/i.test(value);
+}
+
+function parseCssColor(color) {
+  if (!color || typeof color !== 'string') return null;
+  const value = color.trim().toLowerCase();
+  if (value === 'transparent') {
+    return { r: 0, g: 0, b: 0, a: 0 };
   }
-  
-  // Update panel theme class if panel exists
-  if (panel) {
-    panel.classList.remove('ce-theme-light', 'ce-theme-dark');
-    if (theme === 'auto') {
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      panel.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
-    } else {
-      panel.classList.add(`ce-theme-${theme}`);
+
+  const match = value.match(/^rgba?\(([^)]+)\)$/);
+  if (!match) return null;
+
+  const parts = match[1].split(',').map((part) => part.trim());
+  if (parts.length < 3) return null;
+
+  function parseChannel(channel) {
+    if (channel.endsWith('%')) {
+      const percent = parseFloat(channel);
+      if (!Number.isFinite(percent)) return null;
+      return Math.max(0, Math.min(255, Math.round((percent / 100) * 255)));
     }
+    const numeric = parseFloat(channel);
+    if (!Number.isFinite(numeric)) return null;
+    return Math.max(0, Math.min(255, Math.round(numeric)));
+  }
+
+  function parseAlpha(alpha) {
+    if (alpha == null) return 1;
+    if (alpha.endsWith('%')) {
+      const percent = parseFloat(alpha);
+      if (!Number.isFinite(percent)) return null;
+      return Math.max(0, Math.min(1, percent / 100));
+    }
+    const numeric = parseFloat(alpha);
+    if (!Number.isFinite(numeric)) return null;
+    return Math.max(0, Math.min(1, numeric));
+  }
+
+  const r = parseChannel(parts[0]);
+  const g = parseChannel(parts[1]);
+  const b = parseChannel(parts[2]);
+  const a = parseAlpha(parts[3]);
+
+  if (r == null || g == null || b == null || a == null) return null;
+  return { r, g, b, a };
+}
+
+function getLuminance(color) {
+  if (!color) return 1;
+  const toLinear = (channel) => {
+    const value = channel / 255;
+    return value <= 0.04045
+      ? value / 12.92
+      : Math.pow((value + 0.055) / 1.055, 2.4);
+  };
+  const r = toLinear(color.r);
+  const g = toLinear(color.g);
+  const b = toLinear(color.b);
+  return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+}
+
+function shouldUseDarkTheme() {
+  const root = document.documentElement;
+  const body = document.body;
+  const targets = [root, body].filter(Boolean);
+  const themeAttrs = ['data-theme', 'data-color-scheme'];
+
+  // 1) Explicit dark theme attributes on html/body
+  for (const element of targets) {
+    for (const attr of themeAttrs) {
+      const value = element.getAttribute(attr);
+      if (hasDarkToken(value)) return true;
+    }
+  }
+
+  // 2) Dark theme classes on html/body
+  for (const element of targets) {
+    if (element.classList?.contains('dark') || element.classList?.contains('theme-dark')) {
+      return true;
+    }
+  }
+
+  // 3) Computed color-scheme for html/body
+  for (const element of targets) {
+    const style = window.getComputedStyle(element);
+    const colorScheme = style.colorScheme || style.getPropertyValue('color-scheme');
+    if (hasDarkToken(colorScheme) && !hasLightToken(colorScheme)) {
+      return true;
+    }
+  }
+
+  // 4) Background luminance check (ignore fully transparent backgrounds)
+  for (const element of targets) {
+    const style = window.getComputedStyle(element);
+    const parsed = parseCssColor(style.backgroundColor);
+    if (!parsed || parsed.a <= 0.01) continue;
+    if (getLuminance(parsed) < 0.45) {
+      return true;
+    }
+  }
+
+  // 5) Fallback to system preference
+  return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+function getEffectiveTheme(theme) {
+  if (theme === 'dark') return 'dark';
+  if (theme === 'light') return 'light';
+  return shouldUseDarkTheme() ? 'dark' : 'light';
+}
+
+function applyThemeClass(element, resolvedTheme) {
+  if (!element) return;
+  element.classList.remove('ce-theme-light', 'ce-theme-dark');
+  element.classList.add(`ce-theme-${resolvedTheme}`);
+}
+
+function applyTheme(theme) {
+  const resolvedTheme = getEffectiveTheme(theme);
+  const root = document.documentElement;
+  if (root) {
+    root.setAttribute('data-ce-copy-md-theme', resolvedTheme);
+  }
+
+  applyThemeClass(container, resolvedTheme);
+  applyThemeClass(panel, resolvedTheme);
+  applyThemeClass(selectionToolbar, resolvedTheme);
+}
+
+function scheduleAutoThemeSync() {
+  if (pendingAutoThemeSync) return;
+  pendingAutoThemeSync = true;
+
+  requestAnimationFrame(() => {
+    pendingAutoThemeSync = false;
+    if (state.settings.theme === 'auto') {
+      applyTheme('auto');
+    }
+  });
+}
+
+function setupAutoThemeWatchers() {
+  if (window.matchMedia) {
+    hostThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    hostThemeMediaQuery.addEventListener('change', () => {
+      scheduleAutoThemeSync();
+    });
+  }
+
+  if (hostThemeObserver) {
+    hostThemeObserver.disconnect();
+  }
+  hostThemeObserver = new MutationObserver(() => {
+    scheduleAutoThemeSync();
+  });
+
+  const root = document.documentElement;
+  const body = document.body;
+  const observerOptions = {
+    attributes: true,
+    attributeFilter: ['class', 'style', 'data-theme', 'data-color-scheme']
+  };
+
+  if (root) {
+    hostThemeObserver.observe(root, observerOptions);
+  }
+  if (body) {
+    hostThemeObserver.observe(body, observerOptions);
   }
 }
 
@@ -3289,15 +3445,7 @@ async function init() {
   
   // Apply theme
   applyTheme(state.settings.theme || 'auto');
-  
-  // Listen to system theme changes for auto mode
-  if (window.matchMedia) {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-      if (state.settings.theme === 'auto') {
-        applyTheme('auto');
-      }
-    });
-  }
+  setupAutoThemeWatchers();
   
   state.currentConversationId = getConversationId();
   renderUI();
@@ -3649,19 +3797,8 @@ function renderUI() {
     currentScope: state.searchScope,
     currentProjectId: getCurrentProjectId()
   });
-  
-  // Apply theme class to panel so it inherits CSS variables
-  if (container) {
-    const themeClass = Array.from(container.classList).find(cls => cls.startsWith('ce-theme-'));
-    if (themeClass) {
-      panel.classList.add(themeClass);
-    } else {
-      // Default to light theme if no theme class found
-      panel.classList.add('ce-theme-light');
-    }
-  } else {
-    panel.classList.add('ce-theme-light');
-  }
+
+  applyTheme(getCurrentTheme());
   
   panel.classList.toggle('ce-panel-open', state.panelOpen);
   document.body.appendChild(panel);
@@ -3683,15 +3820,8 @@ function updateUI() {
     updateFABCount(fab, totalSnippets.length);
   }
   if (panel) {
-    // Update theme class on panel
     const currentTheme = getCurrentTheme();
-    panel.classList.remove('ce-theme-light', 'ce-theme-dark');
-    if (currentTheme === 'auto') {
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      panel.classList.add(prefersDark ? 'ce-theme-dark' : 'ce-theme-light');
-    } else {
-      panel.classList.add(`ce-theme-${currentTheme}`);
-    }
+    applyTheme(currentTheme);
     
     // Update theme button icon if it exists
     const themeBtn = panel.querySelector('.ce-btn-theme');
@@ -4254,7 +4384,10 @@ if (typeof globalThis !== 'undefined' && globalThis.__CE_ENABLE_TEST_API__) {
     upsertSnippet,
     removeSnippet,
     clearThread,
-    clearAll
+    clearAll,
+    shouldUseDarkTheme,
+    getEffectiveTheme,
+    applyTheme
   };
 }
 

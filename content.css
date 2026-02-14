@@ -5,6 +5,7 @@
 
 /* CSS Variables - Light Theme (Default) */
 :root,
+:root[data-ce-copy-md-theme='light'],
 #ce-root,
 .ce-theme-light {
   --ce-bg-primary: #ffffff;
@@ -26,6 +27,7 @@
 }
 
 /* Dark Theme */
+:root[data-ce-copy-md-theme='dark'],
 :root.ce-theme-dark,
 #ce-root.ce-theme-dark,
 .ce-theme-dark {

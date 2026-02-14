@@ -34,5 +34,8 @@ export const {
   upsertSnippet,
   removeSnippet,
   clearThread,
-  clearAll
+  clearAll,
+  shouldUseDarkTheme,
+  getEffectiveTheme,
+  applyTheme
 } = api;
